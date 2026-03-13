@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.testpulse/
+.venv/
+venv/
+.public/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TestPulse artifacts (generated at runtime)
+artifacts/
+evidence/
+*.pcap
+*.pcapng
+evidence_bundle.json
+*_timeline.mmd
+*_eapol.mmd

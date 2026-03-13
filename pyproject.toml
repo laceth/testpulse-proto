@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "testpulse-proto"
+version = "0.1.0"
+description = "CLI-first TestPulse prototype scaffold"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+endpoint = ["pywinrm>=0.5.0", "pypsrp>=0.8.0"]
+dev = ["pytest>=7", "pywinrm>=0.5.0", "pypsrp>=0.8.0"]
+
+[project.scripts]
+testpulse = "testpulse.tools.run_diagnostics:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["testpulse*"]
