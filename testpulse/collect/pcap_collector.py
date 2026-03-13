@@ -115,6 +115,21 @@ class PcapConfig:
     endpoint_interface: str = ""        # tshark interface name or index
     endpoint_filter: str = "eapol or (udp port 1812) or (udp port 1813)"
 
+    # --- Dual-NIC passthrough support ---
+    # When the passthrough VM has two NICs:
+    #   - Management NIC (10.16.133.143) — survives 802.1X toggle
+    #   - 802.1X passthrough NIC — toggles during auth (kills tshark)
+    # Set endpoint_mgmt_interface to capture L3+ (RADIUS/LDAP) on
+    # the management NIC while SPAN captures L2 EAPOL on the switch.
+    endpoint_dual_nic: bool = False
+    endpoint_mgmt_interface: str = ""       # management NIC name (survives toggle)
+    endpoint_mgmt_filter: str = (
+        "(udp port 1812 or udp port 1813) or "  # RADIUS
+        "(tcp port 389 or tcp port 636) or "     # LDAP/S
+        "(udp port 67 or udp port 68) or "       # DHCP
+        "icmp"                                   # ping
+    )
+
     # --- LDAP / AD VM (Linux or Windows) ---
     ad_ip: str = ""
     ad_user: str = "root"
@@ -149,13 +164,32 @@ class PcapConfig:
                 remote_pcap_path="/tmp/testpulse_capture_em.pcap",
             ))
         if self.endpoint_ip:
-            targets.append(PcapTarget(
-                name="endpoint", ip=self.endpoint_ip,
-                user=self.endpoint_user, password=self.endpoint_pass,
-                transport="winrm", interface=self.endpoint_interface,
-                capture_filter=self.endpoint_filter,
-                remote_pcap_path=r"C:\TestPulse\captures\testpulse_capture_endpoint.pcap",
-            ))
+            if self.endpoint_dual_nic and self.endpoint_mgmt_interface:
+                # Dual-NIC mode: capture on management NIC (survives 802.1X toggle)
+                targets.append(PcapTarget(
+                    name="endpoint_mgmt", ip=self.endpoint_ip,
+                    user=self.endpoint_user, password=self.endpoint_pass,
+                    transport="winrm", interface=self.endpoint_mgmt_interface,
+                    capture_filter=self.endpoint_mgmt_filter,
+                    remote_pcap_path=r"C:\TestPulse\captures\testpulse_capture_endpoint_mgmt.pcap",
+                ))
+                # Also capture on 802.1X NIC if interface is set (may be killed by toggle)
+                if self.endpoint_interface:
+                    targets.append(PcapTarget(
+                        name="endpoint_dot1x", ip=self.endpoint_ip,
+                        user=self.endpoint_user, password=self.endpoint_pass,
+                        transport="winrm", interface=self.endpoint_interface,
+                        capture_filter="ether proto 0x888e",  # L2-only on passthrough NIC
+                        remote_pcap_path=r"C:\TestPulse\captures\testpulse_capture_endpoint_dot1x.pcap",
+                    ))
+            else:
+                targets.append(PcapTarget(
+                    name="endpoint", ip=self.endpoint_ip,
+                    user=self.endpoint_user, password=self.endpoint_pass,
+                    transport="winrm", interface=self.endpoint_interface,
+                    capture_filter=self.endpoint_filter,
+                    remote_pcap_path=r"C:\TestPulse\captures\testpulse_capture_endpoint.pcap",
+                ))
         if self.ad_ip:
             targets.append(PcapTarget(
                 name="ad", ip=self.ad_ip,
@@ -207,6 +241,10 @@ class PcapConfig:
             cfg.endpoint_ip = pt.get("ip", "")
             cfg.endpoint_user = pt.get("user_name", cfg.endpoint_user)
             cfg.endpoint_pass = pt.get("password", cfg.endpoint_pass)
+            cfg.endpoint_dual_nic = pt.get("dual_nic", False)
+            cfg.endpoint_mgmt_interface = pt.get("mgmt_interface", "")
+            cfg.endpoint_interface = pt.get("dot1x_interface",
+                                            pt.get("interface", ""))
         if "ad" in data:
             ad = data["ad"]
             cfg.ad_ip = ad.get("ip", "")

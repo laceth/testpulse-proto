@@ -298,6 +298,170 @@ Optional - Diagrams:
   --no-timeline               Disable timeline diagram
 ```
 
+## Evidence Dashboard
+
+Every run automatically generates a **combined tabbed HTML dashboard** alongside
+the individual diagram files.  The dashboard renders all available Mermaid
+diagrams in a single page with tab navigation.
+
+```
+[OK] Wrote dashboard: T1316925_dashboard.html (4 tabs)
+```
+
+### Dashboard features
+
+| Feature | Details |
+|---------|---------|
+| **Tabbed layout** | One tab per diagram — click to switch |
+| **Auto-detection** | Only diagrams that were generated appear as tabs |
+| **Open full size** | Each tab includes an "Open full size ↗" link to the standalone HTML |
+| **Mermaid deferred render** | All panes render while visible, then inactive tabs are hidden — avoids blank-tab bugs |
+| **HTTP server** | Served on port 8765 alongside individual diagrams |
+
+### Tab mapping
+
+| .mmd file suffix | Dashboard tab label |
+|------------------|---------------------|
+| `_bundle` (base) | Protocol Sequence |
+| `_protocol_h` | Protocol Flow |
+| `_timeline` | Timeline Story |
+| `_components` | Component Topology |
+| `_eapol` | EAPOL Wire Trace |
+| `_eapol_h` | EAPOL Horizontal |
+
+Standard authentication tests (pre-admission, post-connect) produce 4 tabs.
+Tests that include pcap capture (`--pcap`) produce all 6 tabs.
+
+## eapol_test — Diagnostic Tool for Certificate & RADIUS Validation
+
+`eapol_test` is a command-line EAP supplicant from the hostapd project.
+TestPulse wraps it via `testpulse.tools.eapol_test_runner` to probe RADIUS
+health and validate certificate-based authentication **without** a physical
+switch or 802.1X supplicant.
+
+### When to use
+
+- **Appliance flakiness** — Is RADIUS accepting/rejecting correctly, or is the
+  policy engine intermittently broken?
+- **Certificate validation** — Does the appliance correctly reject revoked or
+  expired client certificates?
+- **EKU checking** — Are Extended Key Usage constraints (Client Authentication
+  OID `1.3.6.1.5.5.7.3.2`) enforced?
+- **MSCA / AD CS integration** — Verify certificates issued by Microsoft
+  Certificate Authority work end-to-end through the RADIUS chain.
+- **OCSP stapling** — Confirm the appliance checks certificate revocation status
+  (CRL / OCSP) before granting access.
+- **Baseline before/after** — Run a 3-cert probe (good/revoked/expired) before
+  and after a config change to diff behaviour.
+
+### Certificate preparation
+
+Convert PFX (PKCS#12) certificates to PEM for eapol_test:
+
+```bash
+# Extract client cert
+openssl pkcs12 -in Dot1x-CLT-Good.pfx -clcerts -nokeys -out good.pem -passin pass:aristo
+
+# Extract private key
+openssl pkcs12 -in Dot1x-CLT-Good.pfx -nocerts -nodes -out good_key.pem -passin pass:aristo
+
+# Extract CA chain
+openssl pkcs12 -in Dot1x-CLT-Good.pfx -cacerts -nokeys -out ca.pem -passin pass:aristo
+```
+
+Repeat for revoked and expired certificates.
+
+### Three-certificate validation probe
+
+The gold-standard diagnostic runs three probes with controlled certificates:
+
+| Probe | Certificate | Expected Result | Meaning |
+|-------|------------|-----------------|---------|
+| **Good** | Valid cert, correct EKU | `Access-Accept` | RADIUS + policy working |
+| **Revoked** | CA-revoked cert | `Access-Reject` | OCSP / CRL checking works |
+| **Expired** | Expired validity period | `Access-Reject` | Certificate date validation works |
+
+### Python API
+
+```python
+from testpulse.tools.eapol_test_runner import run_eapol_test, EapolTestConfig
+
+# Good certificate — expect Accept
+good = EapolTestConfig(
+    radius_ip="10.16.177.66",
+    shared_secret="testing123",
+    identity="Dot1x-CLT-Good",
+    eap_method="TLS",
+    ca_cert="/path/to/ca.pem",
+    client_cert="/path/to/good.pem",
+    private_key="/path/to/good_key.pem",
+    private_key_passwd="aristo",
+)
+result = run_eapol_test(good)
+print(f"Good cert: {'PASS' if result.success else 'FAIL'}")
+
+# Revoked certificate — expect Reject
+revoked = EapolTestConfig(
+    radius_ip="10.16.177.66",
+    shared_secret="testing123",
+    identity="Dot1x-CLT-Revoked",
+    eap_method="TLS",
+    ca_cert="/path/to/ca.pem",
+    client_cert="/path/to/revoked.pem",
+    private_key="/path/to/revoked_key.pem",
+    private_key_passwd="aristo",
+)
+result = run_eapol_test(revoked)
+print(f"Revoked cert: {'PASS' if not result.success else 'FAIL — OCSP not enforced'}")
+```
+
+### Interpreting results
+
+| Result | Good cert | Revoked cert | Expired cert | Diagnosis |
+|--------|-----------|-------------|-------------|-----------|
+| ✅ Expected | Accept | Reject | Reject | Appliance healthy |
+| ⚠️ OCSP gap | Accept | **Accept** | Reject | OCSP/CRL not configured — revoked certs pass through |
+| ⚠️ Flaky | Intermittent | — | — | RADIUS service unstable, check radiusd logs |
+| ❌ Broken | Reject | Reject | Reject | Certificate chain or trust anchor misconfigured |
+
+### EKU / MSCA checklist
+
+When validating certificates issued by Microsoft CA (AD CS):
+
+1. **EKU present** — Client cert must include `Client Authentication` (OID `1.3.6.1.5.5.7.3.2`).
+   Verify with: `openssl x509 -in cert.pem -noout -purpose`
+2. **CA chain complete** — The full chain (root → intermediate → leaf) must be installed in the
+   RADIUS trust store. Missing intermediates cause `Access-Reject` even for valid certs.
+3. **CRL Distribution Point** — Cert should include a CDP the appliance can reach.
+   Verify with: `openssl x509 -in cert.pem -noout -text | grep -A2 "CRL Distribution"`
+4. **OCSP Responder** — If using OCSP, the AIA extension must point to a reachable responder.
+   Verify with: `openssl x509 -in cert.pem -noout -text | grep -A2 "Authority Information Access"`
+5. **Template name** — AD CS templates control EKU, key usage, and validity.  Common templates
+   for 802.1X: `Workstation Authentication`, `Computer`, or custom EAP-TLS templates.
+
+### Running with pcap capture for full evidence
+
+Combine eapol_test with pcap collection for a complete evidence bundle:
+
+```bash
+# 1. Start pcap collection on appliance
+testpulse --run-dir ./eapol_diag --testcase-id EAPOL-CERT-001 \
+  --expected-decision accept --collect \
+  --testbed-config radius.yaml --pcap ./eapol_diag/pcap/appliance.pcap \
+  --pretty
+
+# 2. Run the three-cert probe (via Python API or manually)
+
+# 3. Analyse collected artifacts — produces 6 diagrams + dashboard
+testpulse --run-dir ./eapol_diag --testcase-id EAPOL-CERT-001 \
+  --expected-decision accept \
+  --pcap ./eapol_diag/pcap/appliance.pcap \
+  --pretty
+```
+
+The dashboard will contain all 6 diagram tabs showing the full EAP-TLS
+handshake, RADIUS exchange, timeline, and component topology for each probe.
+
 ## Phase Plan
 
 | Phase | Status | Description |
