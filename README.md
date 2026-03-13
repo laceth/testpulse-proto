@@ -462,6 +462,86 @@ testpulse --run-dir ./eapol_diag --testcase-id EAPOL-CERT-001 \
 The dashboard will contain all 6 diagram tabs showing the full EAP-TLS
 handshake, RADIUS exchange, timeline, and component topology for each probe.
 
+## Phase 1 — Tool Categories
+
+TestPulse Phase 1 delivers **19 tools** across **6 categories**: 5 collectors,
+7 parsers, 3 core engine modules, 3 visualization outputs, 2 active probes,
+and 1 CLI orchestrator.
+
+### Category 1 — Evidence Collection
+
+| Tool | Module | Transport | Purpose |
+|------|--------|-----------|---------|
+| Appliance Collector | `collect/appliance_collector.py` | SSH / SFTP | Pull radiusd.log, dot1x.log, redis snapshot, fstool status, hostinfo, local.properties from Forescout appliance |
+| Endpoint Collector | `collect/endpoint_collector.py` | WinRM / PSRP | Pull Windows event logs (Wired-AutoConfig, EapHost), netsh LAN profiles, ipconfig, cert store dumps |
+| PCAP Collector | `collect/pcap_collector.py` | SSH / WinRM | Multi-device tcpdump/tshark orchestration across appliance, switch, endpoint, EM — dual-NIC aware |
+| NTP Sync Checker | `collect/ntp_sync.py` | SSH / WinRM | Pre-flight clock sync validation across all testbed devices (< 50 ms offset required for pcap correlation) |
+| Tunnel Manager | `collect/tunnel_manager.py` | SSH | Reverse SSH tunnel setup for appliance → VM file transfer when direct connectivity is unavailable |
+
+### Category 2 — Log Ingestion & Parsing
+
+| Parser | Module | Source | Event Kinds |
+|--------|--------|--------|-------------|
+| RADIUS Parser | `ingest/radiusd_parser.py` | `radiusd.log` | `RADIUS_ACCESS_REQUEST`, `RADIUS_ACCESS_ACCEPT`, `RADIUS_ACCESS_REJECT` — full attribute correlation (MAC, user, NAS, Id) |
+| Dot1x Parser | `ingest/dot1x_parser.py` | `dot1x.log` | 24 kinds — plugin lifecycle, config, MAR, policy, EAP type, VLAN config |
+| Framework Parser | `ingest/framework_parser.py` | `framework.log` | 24 kinds — verify, check, property, verdict (from fstester) |
+| Endpoint Parser | `ingest/endpoint_parser.py` | `endpoint/` dir | Windows auth success/failure events, NIC adapter config |
+| Redis Parser | `ingest/redis_parser.py` | `redis_monitor.log`, `redis_hash_dump.txt` | 4 kinds — rule slot, rule action, auth source state |
+| Identity Parser | `ingest/identity_parser.py` | `local_properties.txt`, `fstool_*` | 9 kinds — login type, domain, classification |
+| EAPOL / PCAP Parser | `ingest/eapol_parser.py` | `.pcap` / `.pcapng` | 30+ kinds — EAPOL Start/Logoff, EAP Request/Response/Success/Failure, TLS handshake (ClientHello → Finished), RADIUS wire frames |
+
+### Category 3 — Correlation & Evaluation Engine
+
+| Tool | Module | Purpose |
+|------|--------|---------|
+| Correlator | `core/correlate.py` | Sort + deduplicate events across all sources into a unified timeline |
+| Evaluator | `core/evaluate.py` | Decision engine — compare observed vs expected auth result, compute confidence score, classify PASS / FAIL / INCONCLUSIVE |
+| Bundle Builder | `core/bundle.py` | Build the `EvidenceBundle` JSON with decision, confidence, timeline, findings, artifacts |
+
+### Category 4 — Visualization & Reporting
+
+| Tool | Module | Output | Purpose |
+|------|--------|--------|---------|
+| Mermaid Diagram Generator | `tools/mermaid_timeline.py` | `.mmd` + `.html` | 6 diagram types: Protocol Sequence (V/H), Timeline Story, Component Topology, EAPOL Wire Trace (V/H) |
+| Evidence Dashboard | `tools/run_diagnostics.py` | `*_dashboard.html` | Combined tabbed HTML — all diagrams in one page, deferred Mermaid rendering, "Open full size" links |
+| HTTP Diagram Server | `tools/run_diagnostics.py` | `localhost:8765` | Auto-started web server for in-browser / VS Code Simple Browser viewing |
+
+### Category 5 — Active Diagnostic Probes
+
+| Tool | Module | Purpose |
+|------|--------|---------|
+| eapol_test Runner | `tools/eapol_test_runner.py` | Probe RADIUS with controlled EAP identity/certs — validate Accept/Reject, certificate chain, EKU, OCSP without a real supplicant |
+| PCAP Analyzer | `tools/pcap_analyzer.py` | Deep packet analysis with scapy — frame-level AAA summary reports, BPF/display filter reference, optional Wireshark launch |
+
+### Category 6 — CLI Orchestrator
+
+| Tool | Module | Purpose |
+|------|--------|---------|
+| run_diagnostics | `tools/run_diagnostics.py` | Single-command CLI: collect → ingest → correlate → evaluate → bundle → diagrams → dashboard → serve |
+
+### Testbed Configuration (`radius.yaml`)
+
+TestPulse uses a YAML configuration file that describes the lab topology:
+
+```yaml
+em:
+  ip: 10.16.177.65          # Enterprise Manager
+ca:
+  ip: 10.16.177.66          # Forescout appliance (RADIUS)
+switch:
+  ip: 10.16.128.21          # Cisco switch
+  port1:
+    interface: TenGigabitEthernet1/1
+    vlan: 1570
+passthrough:
+  ip: 10.16.133.134         # Windows passthrough endpoint
+  mac: 98f2b301a055
+```
+
+This file drives `--collect`, `--testbed-config`, NTP pre-flight, PCAP
+orchestration, and eapol_test probes — keeping connection details out of
+command-line history.
+
 ## Phase Plan
 
 | Phase | Status | Description |
