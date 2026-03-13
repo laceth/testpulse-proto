@@ -409,13 +409,13 @@ def generate_mermaid(bundle: dict) -> str:
 
     # ── Final State Box ──────────────────────────────────────────────────
     if classification.startswith("PASS"):
-        icon = "✓"
+        icon = "[PASS]"
         state = "PASSED"
     elif classification.startswith("FAIL"):
-        icon = "✗"
+        icon = "[FAIL]"
         state = "FAILED"
     else:
-        icon = "?"
+        icon = "[?]"
         state = "UNKNOWN"
 
     # Build final-state note content
@@ -438,6 +438,119 @@ def generate_mermaid(bundle: dict) -> str:
     L.append(f"    rect rgb({"200, 255, 200" if state == "PASSED" else "255, 200, 200" if state == "FAILED" else "255, 255, 200"})")
     L.append(f"    Note over EP,FW: {final_text}")
     L.append(f"    end")
+
+    return "\n".join(L)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Protocol Sequence — HORIZONTAL flowchart (graph LR)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def generate_mermaid_horizontal(bundle: dict) -> str:
+    """Generate a horizontal ``graph LR`` version of the protocol sequence."""
+    timeline = bundle.get("timeline", [])
+    classification = bundle.get("classification", "UNKNOWN")
+    testcase_id = bundle.get("testcase_id", "?")
+    confidence = bundle.get("confidence", 0)
+
+    observed = bundle.get("observed_decision", "?")
+    expected = bundle.get("expected_decision", "?")
+    if hasattr(observed, "value"):
+        observed = observed.value
+    if hasattr(expected, "value"):
+        expected = expected.value
+
+    meta = _extract_meta(timeline)
+    setup_lines = _collect_setup(timeline)
+    fw_events = _collect_framework(timeline)
+
+    primary_mac = meta["primary_mac"] or (meta["macs"][0] if meta["macs"] else "Endpoint")
+    primary_ip = meta["ips"][0] if meta["ips"] else ""
+    method_label = meta["method_label"] or "802.1X"
+
+    if classification.startswith("PASS"):
+        icon = "[PASS]"
+    elif classification.startswith("FAIL"):
+        icon = "[FAIL]"
+    else:
+        icon = "[?]"
+
+    L: list[str] = []
+    L.append("graph LR")
+    L.append("")
+
+    # -- Participants as subgraphs --
+    ep_detail = _san(primary_mac, 30)
+    if primary_ip:
+        ep_detail += f"\\n{primary_ip}"
+    L.append(f'    subgraph EP["Endpoint\\n{ep_detail}"]')
+    L.append(f"    end")
+
+    L.append(f'    subgraph SW["Cisco Switch"]')
+    L.append(f"    end")
+
+    # RADIUS config note inside subgraph
+    setup_summary = "\\n".join(_san(s, 40) for s in setup_lines[:3]) if setup_lines else ""
+    L.append(f'    subgraph RAD["Forescout RADIUS"]')
+    if setup_summary:
+        L.append(f'        R_CFG["{setup_summary}"]')
+    L.append(f"    end")
+
+    # Framework subgraph with checks result
+    has_passed = any(e.get("kind") == "FRAMEWORK_ALL_CHECKS_PASSED" for e in fw_events)
+    L.append(f'    subgraph FW["TestPulse Framework"]')
+    if has_passed:
+        L.append(f'        CHK["ALL CHECKS PASSED"]')
+    L.append(f"    end")
+    L.append("")
+
+    # -- Protocol arrows --
+    L.append(f'    EP -- "{method_label}" --> SW')
+    L.append(f'    SW -- "RADIUS" --> RAD')
+    L.append("")
+
+    # Framework verification arrows
+    for ev in fw_events:
+        kind = ev.get("kind", "")
+        pf = ev.get("property_field", "")
+        pv = ev.get("property_value", "")
+        eip = ev.get("endpoint_ip", "")
+
+        if kind == "FRAMEWORK_VERIFY_WIRED":
+            label = f"Verify wired auth\\n({_san(eip, 30)})" if eip else "Verify wired auth"
+            L.append(f'    FW -- "{label}" --> RAD')
+        elif kind == "FRAMEWORK_PROP_CHECK" and pf:
+            L.append(f'    FW -- "Check {_san(pf, 25)}\\n(expect: {_san(pv, 25)})" --> RAD')
+        elif kind == "FRAMEWORK_AUTH_STATE" and pf:
+            L.append(f'    RAD -. "{_san(pf, 30)} = {_san(pv, 30)}" .-> FW')
+        elif kind == "FRAMEWORK_PROPERTY" and pf:
+            mac = ev.get("endpoint_mac", "")
+            val = mac if "calling" in pf.lower() else pv
+            L.append(f'    RAD -. "{_san(pf, 30)} = {_san(val, 30)}" .-> FW')
+
+    L.append("")
+
+    # -- Verdict node --
+    verdict_text = f"{icon} {classification}\\nobserved: {observed}\\nexpected: {expected}\\nconfidence: {confidence}"
+    L.append(f'    VERDICT(["{_san(verdict_text, 120)}"])')
+    L.append(f"    FW --> VERDICT")
+    L.append("")
+
+    # -- Styles --
+    L.append("    style EP fill:#1565c0,stroke:#0d47a1,color:#fff")
+    L.append("    style SW fill:#00695c,stroke:#004d40,color:#fff")
+    L.append("    style RAD fill:#e65100,stroke:#bf360c,color:#fff")
+    L.append("    style FW fill:#283593,stroke:#1a237e,color:#fff")
+    if classification.startswith("PASS"):
+        L.append("    style VERDICT fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20,stroke-width:3px")
+    elif classification.startswith("FAIL"):
+        L.append("    style VERDICT fill:#ffcdd2,stroke:#c62828,color:#b71c1c,stroke-width:3px")
+    else:
+        L.append("    style VERDICT fill:#fff9c4,stroke:#f9a825,color:#f57f17,stroke-width:3px")
+    if has_passed:
+        L.append("    style CHK fill:#2e7d32,stroke:#1b5e20,color:#fff")
+    if setup_summary:
+        L.append("    style R_CFG fill:#bf360c,stroke:#e65100,color:#fff")
 
     return "\n".join(L)
 
@@ -470,8 +583,8 @@ _SOURCE_LABELS = {
 
 _KIND_DISPLAY = {
     "RADIUS_ACCESS_REQUEST":          "Access-Request",
-    "RADIUS_ACCESS_ACCEPT":           "Access-Accept ✓",
-    "RADIUS_ACCESS_REJECT":           "Access-Reject ✗",
+    "RADIUS_ACCESS_ACCEPT":           "Access-Accept [PASS]",
+    "RADIUS_ACCESS_REJECT":           "Access-Reject [FAIL]",
     "RADIUS_ACCOUNTING":              "Accounting",
     "DOT1X_EAP_TYPE_CONFIG":          "EAP config",
     "DOT1X_VLAN_RESTRICT_CONFIG":     "VLAN config",
@@ -490,11 +603,11 @@ _KIND_DISPLAY = {
     "FRAMEWORK_VERIFY_WIRED":         "Verify wired auth",
     "FRAMEWORK_AUTH_STATE":           "Auth state read",
     "FRAMEWORK_PROPERTY":             "Property read",
-    "FRAMEWORK_ALL_CHECKS_PASSED":    "ALL CHECKS PASSED ✓",
-    "FRAMEWORK_TEST_PASSED":          "TEST PASSED ✓",
-    "FRAMEWORK_TEST_FAILED":          "TEST FAILED ✗",
-    "ENDPOINT_AUTH_SUCCESS":          "Endpoint auth OK ✓",
-    "ENDPOINT_AUTH_FAILURE":          "Endpoint auth FAIL ✗",
+    "FRAMEWORK_ALL_CHECKS_PASSED":    "ALL CHECKS PASSED",
+    "FRAMEWORK_TEST_PASSED":          "TEST PASSED",
+    "FRAMEWORK_TEST_FAILED":          "TEST FAILED",
+    "ENDPOINT_AUTH_SUCCESS":          "Endpoint auth OK",
+    "ENDPOINT_AUTH_FAILURE":          "Endpoint auth FAIL",
     "IDENTITY_AUTH_STATE":            "Identity auth state",
     "IDENTITY_HOST_RECORD":           "Host record",
     "IDENTITY_PROPERTY":              "Identity property",
@@ -519,14 +632,14 @@ _KIND_DISPLAY = {
     "EAP_TLS_CLIENT_KEY_EXCHANGE":    "TLS Client Key Exchange",
     "EAP_TLS_CHANGE_CIPHER_SPEC":     "TLS Change Cipher Spec",
     "EAP_TLS_FINISHED":               "TLS Finished",
-    "EAP_TLS_ALERT":                  "TLS Alert ⚠",
+    "EAP_TLS_ALERT":                  "TLS Alert [WARN]",
     "EAP_PEAP_CLIENT_HELLO":          "PEAP Client Hello",
     "EAP_PEAP_SERVER_HELLO":          "PEAP Server Hello",
     "EAP_PEAP_CERTIFICATE":           "PEAP Certificate",
     "EAP_PEAP_CHANGE_CIPHER_SPEC":    "PEAP Change Cipher Spec",
     "EAP_PEAP_FINISHED":              "PEAP Finished",
-    "EAP_SUCCESS":                    "EAP-Success ✓",
-    "EAP_FAILURE":                    "EAP-Failure ✗",
+    "EAP_SUCCESS":                    "EAP-Success [PASS]",
+    "EAP_FAILURE":                    "EAP-Failure [FAIL]",
     "RADIUS_ACCESS_CHALLENGE":        "Access-Challenge",
 }
 
@@ -580,11 +693,11 @@ def _detail_for_timeline(ev: dict) -> str:
 
 
 def generate_timeline(bundle: dict) -> str:
-    """Generate a chronological timeline diagram showing all events by time.
+    """Generate a horizontal chronological timeline using flowchart LR.
 
-    This is the 'time story' complement to the protocol sequence diagram.
-    Uses Mermaid's timeline chart to show events ordered by wall-clock time
-    across all log sources.
+    Reproduces the old sequence-diagram layout (participant lanes, arrows
+    between sources, inter-source messages, verdict box) but oriented
+    **horizontally** — time flows left-to-right along the X axis.
     """
     timeline = bundle.get("timeline", [])
     classification = bundle.get("classification", "UNKNOWN")
@@ -607,23 +720,12 @@ def generate_timeline(bundle: dict) -> str:
             seen.add(key)
             deduped.append(ev)
 
-    # ── Split into timestamped vs. config-only ───────────────────────────
-    timed: list[dict] = []
-    untimed: list[dict] = []
-    for ev in deduped:
-        if ev.get("ts"):
-            timed.append(ev)
-        else:
-            untimed.append(ev)
-
-    # ── Sort timed events by epoch then ts string ────────────────────────
+    # ── Parse epoch helper ───────────────────────────────────────────────
     def _parse_epoch(ev: dict) -> float:
-        """Derive a sortable epoch from event data."""
         epoch = ev.get("epoch")
         if epoch:
             return float(epoch)
         ts = ev.get("ts", "")
-        # Try YYYY-MM-DD HH:MM:SS
         m = re.match(r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})", ts)
         if m:
             try:
@@ -631,8 +733,6 @@ def generate_timeline(bundle: dict) -> str:
                 return datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").timestamp()
             except ValueError:
                 pass
-        # Try ctime-style: Thu Mar 12 10:13:39 CDT -0500 2026
-        # Strip timezone abbreviation and offset
         cleaned = re.sub(r"\s+[A-Z]{2,5}\s+[-+]\d{4}\s+", " ", ts)
         cleaned = re.sub(r"\s+[A-Z]{2,5}\s+", " ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -644,7 +744,15 @@ def generate_timeline(bundle: dict) -> str:
                 pass
         return 0.0
 
-    # Within-group priority: put verdicts last
+    # ── Split timed vs config ────────────────────────────────────────────
+    timed: list[dict] = []
+    untimed: list[dict] = []
+    for ev in deduped:
+        if ev.get("ts"):
+            timed.append(ev)
+        else:
+            untimed.append(ev)
+
     _VERDICT_KINDS = {
         "FRAMEWORK_ALL_CHECKS_PASSED", "FRAMEWORK_TEST_PASSED",
         "FRAMEWORK_TEST_FAILED"
@@ -657,14 +765,10 @@ def generate_timeline(bundle: dict) -> str:
 
     timed.sort(key=_sort_key)
 
-    # ── Group by time window — include date for multi-day spans ────────
+    # ── Group by time window ─────────────────────────────────────────────
     from collections import OrderedDict
-    time_groups: OrderedDict[str, list[dict]] = OrderedDict()
+    from datetime import datetime
 
-    if untimed:
-        time_groups["(config)"] = untimed
-
-    # Detect if events span multiple days
     dates_seen: set[str] = set()
     for ev in timed:
         ts = ev.get("ts", "")
@@ -672,11 +776,9 @@ def generate_timeline(bundle: dict) -> str:
         if m:
             dates_seen.add(m.group(1))
         else:
-            # ctime: Thu Mar 12 ...
             m2 = re.match(r"\w+ (\w+ \d+).+?(\d{4})$", ts.strip())
             if m2:
                 dates_seen.add(f"{m2.group(2)}-{m2.group(1)}")
-
     multi_day = len(dates_seen) > 1
 
     def _ts_group_key(ev: dict) -> str:
@@ -684,8 +786,6 @@ def generate_timeline(bundle: dict) -> str:
         time_part = _ts_short(ts) or "(no time)"
         if not multi_day:
             return time_part
-        # Include date prefix from parsed epoch
-        from datetime import datetime
         ep = _parse_epoch(ev)
         if ep > 0:
             try:
@@ -694,130 +794,452 @@ def generate_timeline(bundle: dict) -> str:
                 pass
         return time_part
 
+    time_groups: OrderedDict[str, list[dict]] = OrderedDict()
+    if untimed:
+        time_groups["(config)"] = untimed
     for ev in timed:
         key = _ts_group_key(ev)
         if key not in time_groups:
             time_groups[key] = []
         time_groups[key].append(ev)
 
-    # ── Build Mermaid output ─────────────────────────────────────────────
-    L: list[str] = []
-    L.append("sequenceDiagram")
-    L.append("")
-
-    # Active sources for participants
+    # ── Detect active sources ────────────────────────────────────────────
     active_sources: set[str] = set()
     for ev in deduped:
         src = ev.get("source", "")
         label = _SOURCE_LABELS.get(src, src)
         active_sources.add(label)
 
-    # Participant order
-    part_order = ["RADIUS", "dot1x", "Framework", "Identity", "Redis", "Endpoint"]
-    parts_used = [p for p in part_order if p in active_sources]
+    # ── Sanitize for flowchart labels (no Mermaid-breaking chars) ────────
+    def _fc_san(text: str, limit: int = 70) -> str:
+        text = text.replace('"', "'").replace("#", "Nr").replace(";", " ")
+        text = text.replace("<", "(").replace(">", ")")
+        text = text.replace("|", "/").replace("**", "")
+        text = text.replace("\\", "/")
+        # Collapse whitespace
+        text = re.sub(r"\s+", " ", text).strip()
+        text = text[:limit]
+        # Balance parens/brackets after truncation
+        open_p = text.count("(") - text.count(")")
+        if open_p > 0:
+            text = text + ")" * open_p
+        open_b = text.count("[") - text.count("]")
+        if open_b > 0:
+            text = text + "]" * open_b
+        return text
 
-    # Participant aliases
-    alias_map = {
-        "RADIUS": "RAD",
-        "dot1x": "D1X",
-        "Framework": "FW",
-        "Identity": "ID",
-        "Redis": "RED",
-        "Endpoint": "EP",
-    }
+    # ── Node shape + style helpers ───────────────────────────────────────
+    def _node_shape(ev: dict, nid: str, label: str) -> str:
+        """Return the Mermaid node declaration with shape encoding."""
+        kind = ev.get("kind", "")
+        if kind in ("RADIUS_ACCESS_ACCEPT", "FRAMEWORK_ALL_CHECKS_PASSED",
+                     "FRAMEWORK_TEST_PASSED", "EAP_SUCCESS"):
+            # Stadium (rounded) for accept/pass
+            return f'{nid}(["{label}"])'
+        elif kind in ("RADIUS_ACCESS_REJECT", "FRAMEWORK_TEST_FAILED",
+                       "EAP_FAILURE"):
+            # Hexagon for reject/fail
+            return f'{nid}{{{{"{label}"}}}}'
+        elif kind == "RADIUS_ACCESS_REQUEST":
+            # Parallelogram for requests
+            return f'{nid}[/"{label}"/]'
+        else:
+            return f'{nid}["{label}"]'
 
-    for p in parts_used:
-        alias = alias_map.get(p, p[:3])
-        L.append(f"    participant {alias} as {p}")
-    L.append("")
+    def _node_style(ev: dict, nid: str) -> str | None:
+        """Return optional style line for colored nodes."""
+        kind = ev.get("kind", "")
+        if kind in ("RADIUS_ACCESS_ACCEPT", "FRAMEWORK_ALL_CHECKS_PASSED",
+                     "FRAMEWORK_TEST_PASSED", "EAP_SUCCESS"):
+            return f"style {nid} fill:#2e7d32,stroke:#1b5e20,color:#fff"
+        elif kind in ("RADIUS_ACCESS_REJECT", "FRAMEWORK_TEST_FAILED",
+                       "EAP_FAILURE"):
+            return f"style {nid} fill:#c62828,stroke:#b71c1c,color:#fff"
+        elif kind == "RADIUS_ACCESS_REQUEST":
+            return f"style {nid} fill:#1565c0,stroke:#0d47a1,color:#fff"
+        return None
 
-    # Header
+    # ── Build display label for a node ───────────────────────────────────
+    def _node_label(ev: dict) -> str:
+        kind = ev.get("kind", "")
+        source = ev.get("source", "")
+        src_label = _SOURCE_LABELS.get(source, source)
+        display = _KIND_DISPLAY.get(kind, kind.replace("_", " ").lower())
+        detail = _detail_for_timeline(ev)
+
+        label = f"{src_label}: {display}"
+        if detail:
+            label += f" ({detail})"
+        return _fc_san(label)
+
+    # ── Build flowchart LR ───────────────────────────────────────────────
     if classification.startswith("PASS"):
-        icon = "✓"
+        icon = "[PASS]"
     elif classification.startswith("FAIL"):
-        icon = "✗"
+        icon = "[FAIL]"
     else:
-        icon = "?"
-    first_a = alias_map.get(parts_used[0], parts_used[0][:3])
-    last_a = alias_map.get(parts_used[-1], parts_used[-1][:3])
-    L.append(f"    Note over {first_a},{last_a}: {icon} {testcase_id} Chronological Timeline / {classification}")
+        icon = "[?]"
+
+    L: list[str] = []
+    L.append("graph LR")
     L.append("")
 
-    # ── Render each time group ───────────────────────────────────────────
+    styles: list[str] = []
+    node_id = 0
+    prev_nid: str | None = None
+    group_idx = 0
+
     for ts_label, events in time_groups.items():
-        # Time separator
-        L.append(f"    Note over {first_a},{last_a}: ⏱ {ts_label}")
+        group_idx += 1
+        sg_id = f"T{group_idx}"
+        ts_display = _fc_san(ts_label)
+        L.append(f'    subgraph {sg_id}["T: {ts_display}"]')
 
+        first_in_group: str | None = None
         for ev in events:
-            kind = ev.get("kind", "")
-            source = ev.get("source", "")
-            src_label = _SOURCE_LABELS.get(source, source)
-            src_alias = alias_map.get(src_label, src_label[:3])
-            display = _KIND_DISPLAY.get(kind, kind.replace("_", " ").lower())
-            detail = _detail_for_timeline(ev)
+            node_id += 1
+            nid = f"n{node_id}"
+            label = _node_label(ev)
+            node_decl = _node_shape(ev, nid, label)
+            L.append(f"    {node_decl}")
 
-            # Determine target for inter-source arrows
-            target_alias = src_alias  # default: self
+            s = _node_style(ev, nid)
+            if s:
+                styles.append(s)
 
-            if kind.startswith("RADIUS_"):
-                target_alias = alias_map.get("RADIUS", "RAD")
-                if kind == "RADIUS_ACCESS_REQUEST":
-                    src_alias_actual = alias_map.get("dot1x", "D1X") if "dot1x" in active_sources else src_alias
-                    arrow = "->>"
-                    label = f"{display}"
-                    if detail:
-                        label += f"<br/>({detail})"
-                    L.append(f"    {src_alias_actual}{arrow}{target_alias}: {_san(label)}")
-                    continue
-                elif kind in ("RADIUS_ACCESS_ACCEPT", "RADIUS_ACCESS_REJECT"):
-                    arrow = "->>" if "ACCEPT" in kind else "-->>"
-                    label = f"{display}"
-                    if detail:
-                        label += f"<br/>({detail})"
-                    tgt = alias_map.get("dot1x", "D1X") if "dot1x" in active_sources else src_alias
-                    L.append(f"    {target_alias}{arrow}{tgt}: {_san(label)}")
-                    continue
+            if first_in_group is None:
+                first_in_group = nid
 
-            if kind.startswith("FRAMEWORK_") and kind not in (
-                "FRAMEWORK_ALL_CHECKS_PASSED", "FRAMEWORK_TEST_PASSED", "FRAMEWORK_TEST_FAILED"
-            ):
-                fw_a = alias_map.get("Framework", "FW")
-                d1x_a = alias_map.get("dot1x", "D1X") if "dot1x" in active_sources else fw_a
-                if kind in ("FRAMEWORK_AUTH_STATE", "FRAMEWORK_PROPERTY"):
-                    label = f"{display}"
-                    if detail:
-                        label += f"<br/>({detail})"
-                    L.append(f"    {d1x_a}-->>{fw_a}: {_san(label)}")
-                else:
-                    label = f"{display}"
-                    if detail:
-                        label += f"<br/>({detail})"
-                    L.append(f"    {fw_a}->>{d1x_a}: {_san(label)}")
-                continue
+        L.append(f"    end")
+        L.append("")
 
-            # Self-message or verdict
-            if kind in ("FRAMEWORK_ALL_CHECKS_PASSED", "FRAMEWORK_TEST_PASSED"):
-                L.append(f"    Note over {src_alias}: {display}")
-                continue
-            if kind == "FRAMEWORK_TEST_FAILED":
-                L.append(f"    Note over {src_alias}: {display}")
-                continue
+        # Chain subgroups left-to-right
+        if prev_nid and first_in_group:
+            L.append(f"    {prev_nid} --> {first_in_group}")
+            L.append("")
 
-            # Default: self-message on the source lane
-            label = display
-            if detail:
-                label += f"<br/>({detail})"
-            L.append(f"    {src_alias}->>{src_alias}: {_san(label)}")
+        # Track last node in this group for chaining
+        prev_nid = f"n{node_id}"
 
+    # ── Verdict node ─────────────────────────────────────────────────────
+    node_id += 1
+    vid = f"n{node_id}"
+    verdict_lines = [
+        f"{icon} {classification}",
+        f"observed: {observed} / expected: {expected}",
+        f"confidence: {confidence}",
+    ]
+    verdict_label = _fc_san(", ".join(verdict_lines))
+
+    if classification.startswith("PASS"):
+        L.append(f'{vid}(["{verdict_label}"])')
+        styles.append(f"style {vid} fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20,stroke-width:3px")
+    elif classification.startswith("FAIL"):
+        L.append(f'{vid}(["{verdict_label}"])')
+        styles.append(f"style {vid} fill:#ffcdd2,stroke:#c62828,color:#b71c1c,stroke-width:3px")
+    else:
+        L.append(f'{vid}(["{verdict_label}"])')
+        styles.append(f"style {vid} fill:#fff9c4,stroke:#f57f17,color:#e65100,stroke-width:3px")
+
+    if prev_nid:
+        L.append(f"    {prev_nid} --> {vid}")
     L.append("")
 
-    # ── Verdict bar ──────────────────────────────────────────────────────
-    color = "200, 255, 200" if classification.startswith("PASS") else (
-        "255, 200, 200" if classification.startswith("FAIL") else "255, 255, 200"
-    )
-    L.append(f"    rect rgb({color})")
-    L.append(f"    Note over {first_a},{last_a}: {icon} {classification}<br/>observed: {observed} / expected: {expected}<br/>confidence: {confidence}")
-    L.append(f"    end")
+    # ── Title (as a styled node at the beginning) ────────────────────────
+    title_text = _fc_san(f"{icon} {testcase_id} Chronological Timeline / {classification}")
+    # Insert title node at beginning, linked to first real node
+    title_nid = "TITLE"
+    L.insert(2, f'    {title_nid}["{title_text}"]')
+    L.insert(3, f"    {title_nid} --> n1")
+    L.insert(4, "")
+    styles.append(f"style {title_nid} fill:#263238,stroke:#455a64,color:#eceff1,stroke-width:2px")
+
+    # ── Subgraph label styles ────────────────────────────────────────────
+    for g in range(1, group_idx + 1):
+        styles.append(f"style T{g} fill:none,stroke:#546e7a,stroke-dasharray: 5 5")
+
+    # ── Apply styles ─────────────────────────────────────────────────────
+    L.append("")
+    for s in styles:
+        L.append(f"    {s}")
+
+    return "\n".join(L)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Component / Device Diagram — test topology with metadata
+# ═══════════════════════════════════════════════════════════════════════════
+
+def generate_component_diagram(bundle: dict) -> str:
+    """Generate a horizontal flowchart showing devices in the test topology.
+
+    Extracts device identities and metadata from the evidence bundle and
+    renders them as a left-to-right component diagram with connection
+    arrows showing the authentication flow path.
+    """
+    timeline = bundle.get("timeline", [])
+    classification = bundle.get("classification", "UNKNOWN")
+    testcase_id = bundle.get("testcase_id", "?")
+    confidence = bundle.get("confidence", 0)
+    artifacts = bundle.get("artifacts", [])
+
+    observed = bundle.get("observed_decision", "?")
+    expected = bundle.get("expected_decision", "?")
+    if hasattr(observed, "value"):
+        observed = observed.value
+    if hasattr(expected, "value"):
+        expected = expected.value
+
+    meta = _extract_meta(timeline)
+
+    # ── Collect extended metadata from timeline events ───────────────────
+    plugin_versions: set[str] = set()
+    plugin_settings: dict[str, str] = {}
+    rule_count = 0
+    rule_actions: list[str] = []
+    context_ids: set[str] = set()
+    property_fields: set[str] = set()
+    eap_types: set[str] = set()
+    policy_enabled: bool | None = None
+    sources_seen: set[str] = set()
+    radius_port = ""
+    acct_port = ""
+    min_tls = ""
+    endpoint_ips: set[str] = set()
+    endpoint_macs: set[str] = set()
+    nas_ports: set[str] = set()
+    src_ips: set[str] = set()
+    dst_ips: set[str] = set()
+
+    for ev in timeline:
+        source = ev.get("source", "")
+        if source:
+            sources_seen.add(source)
+
+        v = ev.get("plugin_version")
+        if v:
+            plugin_versions.add(v)
+
+        pe = ev.get("policy_enabled")
+        if pe is not None:
+            policy_enabled = pe
+
+        ctx = ev.get("context_id")
+        if ctx:
+            context_ids.add(ctx)
+
+        pf = ev.get("property_field")
+        if pf:
+            property_fields.add(pf)
+
+        et = ev.get("eap_type")
+        if et:
+            eap_types.add(et)
+
+        ip = ev.get("endpoint_ip")
+        if ip:
+            endpoint_ips.add(ip)
+
+        for f in ("calling_station_id", "endpoint_mac"):
+            mac = ev.get(f)
+            if mac:
+                endpoint_macs.add(mac)
+
+        npi = ev.get("nas_port_id")
+        if npi:
+            nas_ports.add(npi)
+
+        si = ev.get("src_ip")
+        if si:
+            src_ips.add(si)
+        di = ev.get("dst_ip")
+        if di:
+            dst_ips.add(di)
+
+        md = ev.get("metadata", {})
+        kind = ev.get("kind", "")
+
+        if kind == "IDENTITY_PLUGIN_SETTING":
+            sk = md.get("setting_key", "")
+            sv = md.get("setting_value", "")
+            if sk:
+                plugin_settings[sk] = sv
+                if sk == "localradiusport":
+                    radius_port = sv
+                elif sk == "localacctport":
+                    acct_port = sv
+                elif sk == "min_tls_version":
+                    min_tls = sv
+
+        if kind == "IDENTITY_RULE_CONFIG":
+            rule_count = md.get("rule_count", 0)
+
+        if kind in ("IDENTITY_RULE_AUTH", "REDIS_RULE_STATE"):
+            action = md.get("auth_action", "")
+            if action:
+                rule_actions.append(action)
+
+    # ── Sanitize helper ──────────────────────────────────────────────────
+    def _s(text: str, limit: int = 50) -> str:
+        text = text.replace('"', "'").replace("#", "Nr").replace(";", " ")
+        text = text.replace("<", "(").replace(">", ")")
+        text = text.replace("|", "/").replace("**", "").replace("\\", "/")
+        text = re.sub(r"\s+", " ", text).strip()
+        text = text[:limit]
+        # Balance parens/brackets after truncation
+        open_p = text.count("(") - text.count(")")
+        if open_p > 0:
+            text = text + ")" * open_p
+        open_b = text.count("[") - text.count("]")
+        if open_b > 0:
+            text = text + "]" * open_b
+        return text
+
+    # ── Classification icon ──────────────────────────────────────────────
+    if classification.startswith("PASS"):
+        icon = "[PASS]"
+        verdict_fill = "#c8e6c9"
+        verdict_stroke = "#2e7d32"
+        verdict_color = "#1b5e20"
+    elif classification.startswith("FAIL"):
+        icon = "[FAIL]"
+        verdict_fill = "#ffcdd2"
+        verdict_stroke = "#c62828"
+        verdict_color = "#b71c1c"
+    else:
+        icon = "[?]"
+        verdict_fill = "#fff9c4"
+        verdict_stroke = "#f57f17"
+        verdict_color = "#e65100"
+
+    L: list[str] = []
+    styles: list[str] = []
+    L.append("graph LR")
+    L.append("")
+
+    # ── Title ────────────────────────────────────────────────────────────
+    title = _s(f"{icon} {testcase_id} Component Topology / {classification}")
+    L.append(f'    TITLE["{title}"]')
+    styles.append("style TITLE fill:#263238,stroke:#455a64,color:#eceff1,stroke-width:2px")
+    L.append("")
+
+    # ── Endpoint device ──────────────────────────────────────────────────
+    ep_lines = ["Endpoint"]
+    if endpoint_macs:
+        ep_lines.append(f"MAC: {', '.join(sorted(endpoint_macs)[:2])}")
+    if endpoint_ips:
+        ep_lines.append(f"IP: {', '.join(sorted(endpoint_ips)[:2])}")
+    ep_label = _s(" / ".join(ep_lines))
+    L.append(f'    EP(["{ep_label}"])')
+    styles.append("style EP fill:#1565c0,stroke:#0d47a1,color:#fff")
+    L.append("")
+
+    # ── Switch / NAS ─────────────────────────────────────────────────────
+    sw_lines = ["Switch / NAS"]
+    if src_ips:
+        sw_lines.append(f"IP: {', '.join(sorted(src_ips)[:2])}")
+    if nas_ports:
+        sw_lines.append(f"Port: {', '.join(sorted(nas_ports)[:2])}")
+    sw_label = _s(" / ".join(sw_lines))
+    L.append(f'    SW["{sw_label}"]')
+    styles.append("style SW fill:#00695c,stroke:#004d40,color:#fff")
+    L.append("")
+
+    # ── Forescout Appliance (RADIUS + dot1x) ─────────────────────────────
+    app_lines = ["Forescout Appliance"]
+    if dst_ips:
+        app_lines.append(f"RADIUS IP: {', '.join(sorted(dst_ips)[:1])}")
+    elif radius_port:
+        app_lines.append(f"RADIUS port: {radius_port}")
+    if plugin_versions:
+        app_lines.append(f"dot1x v{sorted(plugin_versions)[-1]}")
+    if policy_enabled is not None:
+        app_lines.append(f"Policy: {'ON' if policy_enabled else 'OFF'}")
+    if min_tls:
+        app_lines.append(f"TLS: {min_tls}")
+    app_label = _s(" / ".join(app_lines))
+    L.append(f'    APP["{app_label}"]')
+    styles.append("style APP fill:#e65100,stroke:#bf360c,color:#fff")
+    L.append("")
+
+    # ── RADIUS config detail subgraph ────────────────────────────────────
+    L.append('    subgraph RADCFG["RADIUS Config"]')
+    rad_detail = []
+    if radius_port:
+        rad_detail.append(f"Auth port: {radius_port}")
+    if acct_port:
+        rad_detail.append(f"Acct port: {acct_port}")
+    if eap_types:
+        rad_detail.append(f"EAP: {', '.join(sorted(eap_types))}")
+    elif meta.get("method_label"):
+        rad_detail.append(f"Method: {meta['method_label']}")
+    if min_tls:
+        rad_detail.append(f"Min TLS: {min_tls}")
+    ocsp = plugin_settings.get("ocsp", "")
+    if ocsp:
+        rad_detail.append(f"OCSP: {ocsp}")
+    crl = plugin_settings.get("crl", "")
+    if crl:
+        rad_detail.append(f"CRL: {crl}")
+    radsec = plugin_settings.get("enableradsec", "")
+    if radsec:
+        rad_detail.append(f"RadSec: {radsec}")
+    frag = plugin_settings.get("fragment_size", "")
+    if frag:
+        rad_detail.append(f"Fragment: {frag}")
+
+    for i, d in enumerate(rad_detail[:6]):
+        L.append(f'    RC{i}["{_s(d)}"]')
+    L.append('    end')
+    styles.append("style RADCFG fill:none,stroke:#546e7a,stroke-dasharray: 5 5")
+    L.append("")
+
+    # ── Pre-admission rules subgraph ─────────────────────────────────────
+    L.append('    subgraph RULES["Pre-Admission Rules"]')
+    if rule_count:
+        L.append(f'    R0["{rule_count} rules configured"]')
+    unique_actions = sorted(set(rule_actions))
+    for i, a in enumerate(unique_actions[:3]):
+        L.append(f'    RA{i}["{_s(f"Action: {a}")}"]')
+    if not rule_count and not unique_actions:
+        L.append('    R0["No rules detected"]')
+    L.append('    end')
+    styles.append("style RULES fill:none,stroke:#546e7a,stroke-dasharray: 5 5")
+    L.append("")
+
+    # ── Data sources subgraph ────────────────────────────────────────────
+    L.append('    subgraph SRCS["Data Sources"]')
+    for i, src in enumerate(sorted(sources_seen)):
+        label = _SOURCE_LABELS.get(src, src)
+        L.append(f'    S{i}["{_s(label + ": " + src)}"]')
+    # Also show artifacts not in sources
+    artifact_only = [a for a in artifacts if a not in sources_seen]
+    for i, a in enumerate(artifact_only[:4]):
+        L.append(f'    SA{i}["{_s(a)}"]')
+    L.append('    end')
+    styles.append("style SRCS fill:none,stroke:#546e7a,stroke-dasharray: 5 5")
+    L.append("")
+
+    # ── Verdict node ─────────────────────────────────────────────────────
+    v_text = _s(f"{icon} {classification}, {observed}/{expected}, conf={confidence}")
+    L.append(f'    VERDICT(["{v_text}"])')
+    styles.append(f"style VERDICT fill:{verdict_fill},stroke:{verdict_stroke},color:{verdict_color},stroke-width:3px")
+    L.append("")
+
+    # ── Connections ──────────────────────────────────────────────────────
+    auth_method = meta.get("method_label") or "802.1X"
+    L.append(f'    TITLE --> EP')
+    L.append(f'    EP -- "{_s(auth_method)}" --> SW')
+    L.append(f'    SW -- "RADIUS" --> APP')
+    L.append(f'    APP --> RADCFG')
+    L.append(f'    APP --> RULES')
+    L.append(f'    APP --> SRCS')
+    L.append(f'    APP --> VERDICT')
+    L.append("")
+
+    # ── Apply styles ─────────────────────────────────────────────────────
+    for s in styles:
+        L.append(f"    {s}")
 
     return "\n".join(L)
 
@@ -974,13 +1396,13 @@ def generate_eapol_diagram(
 
     if has_success or has_accept:
         color = "200, 255, 200"
-        verdict = "✓ Authentication Successful"
+        verdict = "[PASS] Authentication Successful"
     elif has_failure or has_reject:
         color = "255, 200, 200"
-        verdict = "✗ Authentication Failed"
+        verdict = "[FAIL] Authentication Failed"
     else:
         color = "255, 255, 200"
-        verdict = "? Authentication Incomplete"
+        verdict = "[?] Authentication Incomplete"
 
     n_eapol = sum(1 for e in evts if e.get("kind", "").startswith(("EAPOL_", "EAP_")))
     n_radius = sum(1 for e in evts if e.get("kind", "").startswith("RADIUS_"))
@@ -989,6 +1411,145 @@ def generate_eapol_diagram(
     L.append(f"    rect rgb({color})")
     L.append(f"    Note over SUP,SRV: {_san(summary)}")
     L.append(f"    end")
+
+    return "\n".join(L)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EAPOL Wire Trace — HORIZONTAL flowchart (graph LR)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def generate_eapol_horizontal(
+    events: list[dict],
+    *,
+    title: str = "EAPOL / EAP-TLS Wire Trace (Horizontal)",
+) -> str:
+    """Horizontal ``graph LR`` version of the EAPOL wire trace."""
+    from dataclasses import asdict as _asdict
+
+    evts: list[dict] = []
+    for e in events:
+        if hasattr(e, "kind"):
+            evts.append(_asdict(e))
+        else:
+            evts.append(e)
+
+    if not evts:
+        return "graph LR\n    NOTE[\"No EAPOL events captured\"]"
+
+    # Discover participants
+    sup_mac = ""
+    auth_mac = ""
+    radius_ip = ""
+    sup_identity = ""
+    for ev in evts:
+        kind = ev.get("kind", "")
+        meta = ev.get("metadata", {})
+        if kind in ("EAPOL_START", "EAP_RESPONSE_IDENTITY") and not sup_mac:
+            sup_mac = meta.get("src_mac", "") or ev.get("endpoint_mac", "")
+            auth_mac = meta.get("dst_mac", "")
+        if kind == "EAP_RESPONSE_IDENTITY":
+            sup_identity = meta.get("identity", "") or ev.get("username", "") or ""
+        if kind.startswith("RADIUS_") and not radius_ip:
+            radius_ip = ev.get("dst_ip") or ev.get("src_ip") or ""
+
+    sup_label = _san(sup_mac or "Endpoint", 30)
+    if sup_identity:
+        sup_label += f"\\n{_san(sup_identity, 30)}"
+    auth_label = _san(auth_mac or "Authenticator", 30)
+    rad_label = _san(radius_ip or "Auth Server", 30)
+
+    L: list[str] = []
+    styles: list[str] = []
+    L.append("graph LR")
+    L.append("")
+    L.append(f'    SUP(["Supplicant\\n{sup_label}"])')
+    L.append(f'    AUTH["Authenticator\\n{auth_label}"]')
+    L.append(f'    SRV["Auth Server\\n{rad_label}"]')
+    L.append("")
+    L.append(f'    TITLE["{_san(title, 60)}"]')
+    L.append(f"    TITLE --> SUP")
+    L.append("")
+
+    nid = 0
+    prev_node = "SUP"
+
+    for ev in evts:
+        kind = ev.get("kind", "")
+        display = _KIND_DISPLAY.get(kind, kind.replace("_", " "))
+        nid += 1
+        node = f"e{nid}"
+
+        # Determine which participant lane
+        if kind in ("EAPOL_START", "EAPOL_LOGOFF"):
+            L.append(f'    {prev_node} --> {node}["{_san(display, 40)}"]')
+            L.append(f"    {node} --> AUTH")
+            prev_node = node
+        elif kind.startswith("EAP_RESPONSE") or "TLS_CLIENT" in kind or "CERTIFICATE_VERIFY" in kind:
+            L.append(f'    {prev_node} --> {node}["{_san(display, 40)}"]')
+            L.append(f"    {node} --> AUTH")
+            prev_node = node
+        elif kind.startswith("EAP_REQUEST") or "TLS_SERVER" in kind or "CERTIFICATE_REQUEST" in kind:
+            L.append(f'    AUTH --> {node}["{_san(display, 40)}"]')
+            L.append(f"    {node} --> {prev_node}")
+            prev_node = node
+        elif kind == "EAP_SUCCESS":
+            L.append(f'    SRV --> {node}(["{_san(display, 40)}"])')
+            L.append(f"    {node} --> AUTH")
+            prev_node = node
+            styles.append(f"style {node} fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20")
+        elif kind == "EAP_FAILURE":
+            L.append(f'    SRV --> {node}(["{_san(display, 40)}"])')
+            L.append(f"    {node} --> AUTH")
+            prev_node = node
+            styles.append(f"style {node} fill:#ffcdd2,stroke:#c62828,color:#b71c1c")
+        elif kind.startswith("RADIUS_ACCESS_REQUEST"):
+            L.append(f'    AUTH --> {node}["{_san(display, 40)}"]')
+            L.append(f"    {node} --> SRV")
+            prev_node = node
+        elif kind.startswith("RADIUS_"):
+            L.append(f'    SRV --> {node}["{_san(display, 40)}"]')
+            L.append(f"    {node} --> AUTH")
+            prev_node = node
+            if "ACCEPT" in kind:
+                styles.append(f"style {node} fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20")
+            elif "REJECT" in kind:
+                styles.append(f"style {node} fill:#ffcdd2,stroke:#c62828,color:#b71c1c")
+        else:
+            L.append(f'    {prev_node} --> {node}["{_san(display, 40)}"]')
+            prev_node = node
+
+    L.append("")
+
+    # Verdict
+    has_success = any(e.get("kind") == "EAP_SUCCESS" for e in evts)
+    has_failure = any(e.get("kind") == "EAP_FAILURE" for e in evts)
+    has_accept = any(e.get("kind") == "RADIUS_ACCESS_ACCEPT" for e in evts)
+
+    if has_success or has_accept:
+        verdict = "[PASS] Authentication Successful"
+        styles.append("style VERDICT fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20,stroke-width:3px")
+    elif has_failure:
+        verdict = "[FAIL] Authentication Failed"
+        styles.append("style VERDICT fill:#ffcdd2,stroke:#c62828,color:#b71c1c,stroke-width:3px")
+    else:
+        verdict = "[?] Authentication Incomplete"
+        styles.append("style VERDICT fill:#fff9c4,stroke:#f9a825,color:#f57f17,stroke-width:3px")
+
+    n_eapol = sum(1 for e in evts if e.get("kind", "").startswith(("EAPOL_", "EAP_")))
+    n_radius = sum(1 for e in evts if e.get("kind", "").startswith("RADIUS_"))
+
+    L.append(f'    VERDICT(["{_san(verdict, 50)}\\n{n_eapol} EAP, {n_radius} RADIUS"])')
+    L.append(f"    {prev_node} --> VERDICT")
+    L.append("")
+
+    # Styles
+    L.append("    style SUP fill:#1565c0,stroke:#0d47a1,color:#fff")
+    L.append("    style AUTH fill:#00695c,stroke:#004d40,color:#fff")
+    L.append("    style SRV fill:#e65100,stroke:#bf360c,color:#fff")
+    L.append("    style TITLE fill:#263238,stroke:#455a64,color:#eceff1,stroke-width:2px")
+    for s in styles:
+        L.append(f"    {s}")
 
     return "\n".join(L)
 

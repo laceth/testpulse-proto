@@ -14,6 +14,16 @@ This repo is the prototype source of truth for TestPulse v1.
 - `radiusd.log`
 - `dot1x.log`
 - `evidence_bundle.json`
+- Mermaid diagrams (6 types: protocol V/H, timeline H, components H, EAPOL V/H)
+- HTML diagram exports (self-contained, Mermaid.js CDN)
+
+## Diagram conventions
+- Horizontal diagrams use `graph LR` (not `flowchart` — compatibility with older Mermaid.js)
+- No `direction LR` inside subgraphs
+- No `==>` thick arrows — use `-->` only
+- No Unicode symbols in labels — use ASCII `[PASS]`, `[FAIL]`, `[WARN]`
+- Label text truncated with balanced parentheses/brackets
+- HTML export auto-starts HTTP server on port 8765
 
 ## Required metadata keys
 - `testcase_id`

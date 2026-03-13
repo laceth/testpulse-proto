@@ -381,9 +381,12 @@ def main() -> None:
     print(f"     artifacts_found={len(bundle.get('artifacts', []))}")
 
     # ── Mermaid diagram generation (ON by default) ──────────────────────
+    mmd_paths: list[Path] = []
+
     if args.mermaid is not None and not args.no_mermaid:
         from testpulse.tools.mermaid_timeline import generate_mermaid
 
+        # 1. Protocol sequence — vertical (sequenceDiagram)
         mmd_path = (
             Path(args.mermaid)
             if args.mermaid != "auto"
@@ -392,13 +395,26 @@ def main() -> None:
         markup = generate_mermaid(bundle)
         mmd_path.parent.mkdir(parents=True, exist_ok=True)
         mmd_path.write_text(markup, encoding="utf-8")
-        print(f"[OK] Wrote Mermaid protocol diagram: {mmd_path}  ({len(markup)} chars)")
+        mmd_paths.append(mmd_path)
+        print(f"[OK] Wrote protocol diagram (vertical): {mmd_path}  ({len(markup)} chars)")
         print(markup)
+
+        # 2. Protocol sequence — horizontal (graph LR)
+        from testpulse.tools.mermaid_timeline import generate_mermaid_horizontal
+
+        h_path = args.out.with_name(args.out.stem + "_protocol_h.mmd")
+        h_markup = generate_mermaid_horizontal(bundle)
+        h_path.parent.mkdir(parents=True, exist_ok=True)
+        h_path.write_text(h_markup, encoding="utf-8")
+        mmd_paths.append(h_path)
+        print(f"[OK] Wrote protocol diagram (horizontal): {h_path}  ({len(h_markup)} chars)")
+        print(h_markup)
 
     # ── Timeline diagram generation (ON by default) ─────────────────────
     if args.timeline is not None and not args.no_timeline:
         from testpulse.tools.mermaid_timeline import generate_timeline
 
+        # 3. Chronological timeline (graph LR)
         tl_path = (
             Path(args.timeline)
             if args.timeline != "auto"
@@ -407,20 +423,129 @@ def main() -> None:
         tl_markup = generate_timeline(bundle)
         tl_path.parent.mkdir(parents=True, exist_ok=True)
         tl_path.write_text(tl_markup, encoding="utf-8")
-        print(f"[OK] Wrote Mermaid timeline diagram: {tl_path}  ({len(tl_markup)} chars)")
+        mmd_paths.append(tl_path)
+        print(f"[OK] Wrote timeline diagram (horizontal): {tl_path}  ({len(tl_markup)} chars)")
         print(tl_markup)
 
-    # ── EAPOL wire diagram (auto when pcap events exist) ─────────────────
+    # ── Component topology diagram (ON by default) ──────────────────────
+    if not args.no_mermaid:
+        from testpulse.tools.mermaid_timeline import generate_component_diagram
+
+        # 4. Component topology (graph LR)
+        comp_path = args.out.with_name(args.out.stem + "_components.mmd")
+        comp_markup = generate_component_diagram(bundle)
+        comp_path.parent.mkdir(parents=True, exist_ok=True)
+        comp_path.write_text(comp_markup, encoding="utf-8")
+        mmd_paths.append(comp_path)
+        print(f"[OK] Wrote component topology (horizontal): {comp_path}  ({len(comp_markup)} chars)")
+        print(comp_markup)
+
+    # ── EAPOL wire diagrams (auto when pcap events exist) ────────────────
     pcap_events = [e for e in bundle.get("timeline", []) if e.get("source") == "pcap"]
     if pcap_events and not args.no_mermaid:
-        from testpulse.tools.mermaid_timeline import generate_eapol_diagram
+        from testpulse.tools.mermaid_timeline import generate_eapol_diagram, generate_eapol_horizontal
 
+        # 5. EAPOL wire trace — vertical (sequenceDiagram)
         eapol_path = args.out.with_name(args.out.stem + "_eapol.mmd")
         eapol_markup = generate_eapol_diagram(pcap_events)
         eapol_path.parent.mkdir(parents=True, exist_ok=True)
         eapol_path.write_text(eapol_markup, encoding="utf-8")
-        print(f"[OK] Wrote EAPOL wire diagram: {eapol_path}  ({len(eapol_markup)} chars)")
+        mmd_paths.append(eapol_path)
+        print(f"[OK] Wrote EAPOL wire diagram (vertical): {eapol_path}  ({len(eapol_markup)} chars)")
         print(eapol_markup)
+
+        # 6. EAPOL wire trace — horizontal (graph LR)
+        eapol_h_path = args.out.with_name(args.out.stem + "_eapol_h.mmd")
+        eapol_h_markup = generate_eapol_horizontal(pcap_events)
+        eapol_h_path.parent.mkdir(parents=True, exist_ok=True)
+        eapol_h_path.write_text(eapol_h_markup, encoding="utf-8")
+        mmd_paths.append(eapol_h_path)
+        print(f"[OK] Wrote EAPOL wire diagram (horizontal): {eapol_h_path}  ({len(eapol_h_markup)} chars)")
+        print(eapol_h_markup)
+
+    # ── HTML export (self-contained Mermaid.js) ──────────────────────────
+    if mmd_paths:
+        html_paths = _export_html(mmd_paths)
+        _serve_diagrams(html_paths)
+
+
+_HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{title}</title>
+<style>
+  body {{ font-family: sans-serif; background: #1e1e1e; color: #ddd; margin: 2em; }}
+  h1 {{ color: #fff; }}
+  .mermaid {{ background: #fff; padding: 1em; border-radius: 8px; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+<div class="mermaid">
+{mermaid_code}
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({{startOnLoad:true, theme:'default'}});</script>
+</body>
+</html>"""
+
+
+def _export_html(mmd_paths: list[Path]) -> list[Path]:
+    """Convert each .mmd file to a self-contained .html with embedded Mermaid.js."""
+    html_paths: list[Path] = []
+    for mmd in mmd_paths:
+        code = mmd.read_text(encoding="utf-8")
+        html = _HTML_TEMPLATE.format(title=mmd.stem, mermaid_code=code)
+        out = mmd.with_suffix(".html")
+        out.write_text(html, encoding="utf-8")
+        html_paths.append(out)
+        print(f"[OK] Wrote HTML diagram: {out}")
+    return html_paths
+
+
+_SERVE_PORT = 8765
+
+
+def _serve_diagrams(html_paths: list[Path]) -> None:
+    """Start an HTTP server in a background process and print URLs."""
+    import socket
+    import subprocess
+
+    if not html_paths:
+        return
+
+    serve_dir = html_paths[0].parent.resolve()
+    port = _SERVE_PORT
+
+    # Check if server is already running on this port
+    already_running = False
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        already_running = sock.connect_ex(("127.0.0.1", port)) == 0
+
+    if not already_running:
+        # Start a background HTTP server (detached from this process)
+        subprocess.Popen(
+            [sys.executable, "-m", "http.server", str(port)],
+            cwd=str(serve_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print(f"[OK] Started HTTP server on port {port} (serving {serve_dir})")
+    else:
+        print(f"[OK] HTTP server already running on port {port}")
+
+    print()
+    print("=" * 60)
+    print("  Diagram URLs (open in browser or VS Code Simple Browser)")
+    print("  Ctrl+Shift+P -> 'Simple Browser: Show' -> paste URL")
+    print("=" * 60)
+    for hp in html_paths:
+        print(f"  http://localhost:{port}/{hp.name}")
+    print(f"  http://localhost:{port}/          (directory listing)")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
