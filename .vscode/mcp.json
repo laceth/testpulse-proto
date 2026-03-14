@@ -1,0 +1,13 @@
+{
+    "servers": {
+        "testpulse": {
+            "type": "stdio",
+            "command": "python",
+            "args": ["-m", "testpulse.mcp.server"],
+            "env": {
+                "TESTPULSE_CONFIG": "${workspaceFolder}/radius.yaml",
+                "TESTPULSE_ARTIFACTS": "${workspaceFolder}/artifacts"
+            }
+        }
+    }
+}

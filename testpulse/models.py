@@ -11,6 +11,40 @@ class Decision(str, Enum):
     UNKNOWN = "unknown"
 
 
+class RunType(str, Enum):
+    """How the test is executed and analysed."""
+    PROOF_POSITIVE = "proof_positive"
+    NEGATIVE_TEST = "negative_test"
+    FORENSIC = "forensic"
+    STABILITY_PROBE = "stability_probe"
+    EAPOL_PROBE = "eapol_probe"
+
+
+class TestCategory(str, Enum):
+    """What authentication feature is under test."""
+    SAN_DETECTION = "san_detection"
+    EKU_VALIDATION = "eku_validation"
+    OCSP_CRL = "ocsp_crl"
+    CERT_CHAIN = "cert_chain"
+    CERT_EXPIRY = "cert_expiry"
+    EAP_TLS = "eap_tls"
+    PEAP_MSCHAPV2 = "peap_mschapv2"
+    MAB_FALLBACK = "mab_fallback"
+    PRE_ADMISSION = "pre_admission"
+    POLICY_MATCH = "policy_match"
+    COA_DISCONNECT = "coa_disconnect"
+    VLAN_ASSIGNMENT = "vlan_assignment"
+
+
+class TestAspect(str, Enum):
+    """How deeply to verify — which layer of the auth pipeline."""
+    AUTH_DECISION = "auth_decision"
+    RULE_SELECTION = "rule_selection"
+    SUBRULE_EVAL = "subrule_eval"
+    POLICY_CLASS = "policy_class"
+    STATS_AGGREGATE = "stats_aggregate"
+
+
 @dataclass
 class AuthEvent:
     """Core event extracted from any log source.
@@ -89,6 +123,26 @@ class AuthEvent:
 
 
 @dataclass
+class RunMetadata:
+    """Describes how and why a test run was executed."""
+    run_type: RunType = RunType.PROOF_POSITIVE
+    test_category: TestCategory = TestCategory.EAP_TLS
+    test_aspect: TestAspect = TestAspect.AUTH_DECISION
+    operator: str = ""
+    testbed_id: str = ""
+    fstester_test: str | None = None
+    fstester_config: str | None = None
+    cert_name: str | None = None
+    iteration: int | None = None
+    total_iterations: int | None = None
+    parent_run_id: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    pcap_enabled: bool = False
+    ntp_verified: bool = False
+
+
+@dataclass
 class AssuranceExpectation:
     testcase_id: str
     expected_decision: Decision
@@ -108,12 +162,19 @@ class EvidenceBundle:
     timeline: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    run_metadata: RunMetadata | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        # Ensure Decision enums are serialized as plain strings
+        # Ensure enums are serialized as plain strings
         for key in ("observed_decision", "expected_decision"):
             v = d.get(key)
             if hasattr(v, "value"):
                 d[key] = v.value
+        rm = d.get("run_metadata")
+        if rm:
+            for key in ("run_type", "test_category", "test_aspect"):
+                v = rm.get(key)
+                if hasattr(v, "value"):
+                    rm[key] = v.value
         return d
