@@ -56,6 +56,48 @@ TestPulse collects logs from Forescout appliances, parses RADIUS/dot1x/framework
                     └───────────────────┘
 ```
 
+
+## Architecture Docs
+
+Additional architecture references:
+- [Next build plan (PDF)](docs/TestPulse_Next_Build_Plan.pdf)
+- [Next build plan (Markdown)](docs/TestPulse_Next_Build_Plan.md)
+- [Next build plan (DOCX)](docs/TestPulse_Next_Build_Plan.docx)
+- [Dual-surface architecture (PDF)](docs/TestPulse_Dual_Surface_Architecture_for_IDE_MCP_ReactFlow.pdf)
+- [Dual-surface architecture (Markdown)](docs/TestPulse_Dual_Surface_Architecture_for_IDE_MCP_ReactFlow.md)
+- [Dual-surface architecture (DOCX)](docs/TestPulse_Dual_Surface_Architecture_for_IDE_MCP_ReactFlow.docx)
+
+## Run Viewer MVP (new)
+
+This repo now includes the next build for the dual-surface architecture:
+- **FastAPI** thin backend for bundle/timeline/health/prognostics
+- **React Flow** web UI MVP under `web/`
+- **MCP** continues as a thin caller over the same shared service layer
+
+### Start the API
+
+```bash
+pip install -e .[api]
+uvicorn testpulse.api.app:app --reload
+```
+
+### Start the React Flow UI
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The first API routes are:
+- `GET /healthz`
+- `GET /runs`
+- `GET /runs/{run_id}`
+- `GET /runs/{run_id}/bundle`
+- `GET /runs/{run_id}/timeline`
+- `GET /runs/{run_id}/health`
+- `GET /runs/{run_id}/prognostics`
+
 ## Quick Start
 
 ### Install

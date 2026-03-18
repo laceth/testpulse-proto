@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from testpulse.models import (
-    AssuranceExpectation,
     Decision,
     RunMetadata,
     RunType,
@@ -51,20 +50,17 @@ def _run_diagnostics_core(
     config_path: Path | None,
     run_metadata: RunMetadata | None = None,
 ) -> dict:
-    """Run the TestPulse diagnostic pipeline and return the bundle dict."""
-    from testpulse.tools.run_diagnostics import run_diagnostics
+    """Run the TestPulse diagnostic pipeline through the shared service layer."""
+    from testpulse.services.pipeline import analyze_run
 
-    expectation = AssuranceExpectation(
-        testcase_id=testcase_id,
-        expected_decision=expected_decision,
-        expected_method=expected_method,
-    )
-
-    bundle = run_diagnostics(
+    bundle = analyze_run(
         run_dir=run_dir,
-        expectation=expectation,
+        testcase_id=testcase_id,
+        expected_decision=expected_decision.value,
+        expected_method=expected_method,
         collect=collect,
         testbed_config=config_path if collect else None,
+        write_bundle=False,
     )
 
     # Inject run metadata if provided

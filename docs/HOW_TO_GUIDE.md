@@ -14,6 +14,14 @@ The prototype should stay focused on these four core parts:
 - assurance evaluator
 - EvidenceBundle output
 
+
+## Architecture references
+
+Use these docs when positioning the product and the UI split between IDE AI surfaces and the React Flow operations surface:
+- [Dual-surface architecture (PDF)](TestPulse_Dual_Surface_Architecture_for_IDE_MCP_ReactFlow.pdf)
+- [Dual-surface architecture (Markdown)](TestPulse_Dual_Surface_Architecture_for_IDE_MCP_ReactFlow.md)
+- [Dual-surface architecture (DOCX)](TestPulse_Dual_Surface_Architecture_for_IDE_MCP_ReactFlow.docx)
+
 ## 3. Repo layout
 The recommended v1 repo shape is small. This version keeps the layout Copilot-friendly by putting the docs, playbook, and executable scaffold in the same repo so GitHub Copilot can index it and reuse it in chat.
 
@@ -310,3 +318,30 @@ When you add timing evaluation, treat clock sync as a required preflight artifac
 
 ## 13. Deliverable framing
 If you package this for leadership or handoff, align the prototype to the same gate structure already defined for TestPulse: evidence ingestion, correlation, diagnostics bundle, determinism, then workflow closure. That gives the scaffold a direct path into the broader SOW package.
+
+## Run Viewer MVP
+
+The repo now includes a thin **FastAPI** layer in `testpulse/api/` and a **React Flow** UI scaffold in `web/`.
+
+Use them as the shared product seam for the dual-surface architecture:
+- IDE / MCP tools
+- React Flow Run Viewer
+
+Suggested startup:
+
+```bash
+pip install -e .[api]
+uvicorn testpulse.api.app:app --reload
+```
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+## Planning
+
+- [Next build plan (PDF)](TestPulse_Next_Build_Plan.pdf)
+- [Next build plan (Markdown)](TestPulse_Next_Build_Plan.md)
+- [Next build plan (DOCX)](TestPulse_Next_Build_Plan.docx)

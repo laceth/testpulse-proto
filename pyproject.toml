@@ -8,15 +8,30 @@ version = "0.1.0"
 description = "CLI-first TestPulse prototype scaffold"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "PyYAML>=6.0",
+]
 
 [project.optional-dependencies]
-endpoint = ["pywinrm>=0.5.0", "pypsrp>=0.8.0"]
+endpoint = ["pywinrm>=0.5.0", "pypsrp>=0.8.0", "paramiko>=3.4.0"]
+pcap = ["dpkt>=1.9.8", "scapy>=2.5.0"]
 mcp = ["mcp[cli]>=1.0"]
-dev = ["pytest>=7", "pywinrm>=0.5.0", "pypsrp>=0.8.0"]
+api = ["fastapi>=0.111.0", "uvicorn>=0.30.0"]
+dev = [
+  "pytest>=7",
+  "pywinrm>=0.5.0",
+  "pypsrp>=0.8.0",
+  "paramiko>=3.4.0",
+  "dpkt>=1.9.8",
+  "scapy>=2.5.0",
+  "mcp[cli]>=1.0",
+  "fastapi>=0.111.0",
+  "uvicorn>=0.30.0",
+]
 
 [project.scripts]
 testpulse = "testpulse.tools.run_diagnostics:main"
+testpulse-api = "testpulse.api.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "."}

@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from testpulse.core.bundle import build_bundle, collect_artifacts
-from testpulse.core.correlate import correlate
+from testpulse.services.artifact_map_service import build_artifact_map
+from testpulse.core.correlate import correlate, enrich_from_peers
 from testpulse.ingest.dot1x_parser import parse_dot1x
 from testpulse.ingest.endpoint_parser import parse_endpoint_artifacts
 from testpulse.ingest.framework_parser import parse_framework
@@ -123,6 +124,8 @@ def run_diagnostics(
     endpoint_user: str | None = None,
     endpoint_pass: str | None = None,
     pcap_files: list[Path] | None = None,
+    history: list[dict] | None = None,
+    service_metrics: dict | None = None,
 ) -> dict:
     events: list[AuthEvent] = []
 
@@ -190,19 +193,19 @@ def run_diagnostics(
         print(f"[INFO] Parsing pcap: {pcap_path}")
         events.extend(parse_pcap(pcap_path))
 
-    correlated = correlate(events)
+    enriched = enrich_from_peers(events)
+    correlated = correlate(enriched)
     artifacts = collect_artifacts(run_dir)
-    # Also enumerate endpoint artifacts
-    if endpoint_dir.is_dir():
-        for ep_file in sorted(endpoint_dir.rglob("*")):
-            if ep_file.is_file():
-                artifacts.append(f"endpoint/{ep_file.relative_to(endpoint_dir)}")
+    artifact_map = build_artifact_map(run_dir, correlated)
 
     bundle = build_bundle(
         run_id=derive_run_id(run_dir),
         expectation=expectation,
         events=correlated,
         artifacts=artifacts,
+        history=history,
+        service_metrics=service_metrics,
+        artifact_map=artifact_map,
     )
     return bundle.to_dict()
 
@@ -312,6 +315,18 @@ def main() -> None:
         help="Check NTP clock sync across testbed devices before analysis",
     )
     parser.add_argument(
+        "--history-json",
+        type=Path,
+        default=None,
+        help="Optional JSON file containing prior run snapshots or bundles for prognostic scoring.",
+    )
+    parser.add_argument(
+        "--service-metrics-json",
+        type=Path,
+        default=None,
+        help="Optional JSON file containing current-run service metrics (AD latency, DNS lookup, DHCP packets, LDAP volume).",
+    )
+    parser.add_argument(
         "--testbed-config",
         type=Path, default=None,
         help="Path to testbed YAML (radius.yml) — provides appliance/switch/endpoint "
@@ -366,6 +381,21 @@ def main() -> None:
         else:
             print("[WARN] No devices configured for NTP check")
 
+    history: list[dict] = []
+    if args.history_json and args.history_json.exists():
+        raw_history = json.loads(args.history_json.read_text(encoding="utf-8"))
+        if isinstance(raw_history, dict) and isinstance(raw_history.get("runs"), list):
+            history = raw_history["runs"]
+        elif isinstance(raw_history, list):
+            history = raw_history
+
+    service_metrics: dict = {}
+    service_metrics_path = args.service_metrics_json or (args.run_dir / "service_metrics.json")
+    if service_metrics_path and service_metrics_path.exists():
+        loaded = json.loads(service_metrics_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            service_metrics = loaded
+
     expectation = AssuranceExpectation(
         testcase_id=args.testcase_id,
         expected_decision=Decision(args.expected_decision),
@@ -387,6 +417,8 @@ def main() -> None:
         endpoint_user=args.endpoint_user,
         endpoint_pass=args.endpoint_pass,
         pcap_files=args.pcap,
+        history=history,
+        service_metrics=service_metrics,
     )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

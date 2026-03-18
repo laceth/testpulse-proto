@@ -33,3 +33,7 @@ evidence/
 evidence_bundle.json
 *_timeline.mmd
 *_eapol.mmd
+
+# Web UI
+web/node_modules/
+web/dist/
