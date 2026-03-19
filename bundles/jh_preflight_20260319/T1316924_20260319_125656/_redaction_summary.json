@@ -1,0 +1,7 @@
+{
+  "source": "artifacts/T1316924_20260319_125656/evidence_bundle.json",
+  "dest": "/home/triley/testpulse-proto/bundles/jh_preflight_20260319/T1316924_20260319_125656/evidence_bundle.json",
+  "secrets_redacted_count": 3,
+  "unique_ips_redacted": 7,
+  "unique_macs_redacted": 9
+}
