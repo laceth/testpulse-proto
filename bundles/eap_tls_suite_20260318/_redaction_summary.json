@@ -1,0 +1,14 @@
+{
+  "ip_redactions": 3,
+  "mac_redactions": 5,
+  "source_bundles": [
+    "artifacts/T1316924_20260318_191724/evidence_bundle.json",
+    "artifacts/T1316931_20260318_192059/evidence_bundle.json",
+    "artifacts/T1316960_20260318_192432/evidence_bundle.json",
+    "artifacts/T1316965_20260318_192818/evidence_bundle.json",
+    "artifacts/T1316954_20260318_193151/evidence_bundle.json",
+    "artifacts/T1316957_20260318_193523/evidence_bundle.json",
+    "artifacts/T1316958_20260318_193857/evidence_bundle.json",
+    "artifacts/T1316959_20260318_194245/evidence_bundle.json"
+  ]
+}
