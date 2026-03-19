@@ -34,6 +34,9 @@ evidence_bundle.json
 *_timeline.mmd
 *_eapol.mmd
 
+# Allow sharing sanitized bundles in-repo
+!bundles/**/evidence_bundle.json
+
 # Web UI
 web/node_modules/
 web/dist/
