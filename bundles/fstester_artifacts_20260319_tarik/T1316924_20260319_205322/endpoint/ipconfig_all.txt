@@ -1,0 +1,50 @@
+﻿
+Windows IP Configuration
+
+   Host Name . . . . . . . . . . . . : AUTOBVT-GIG6GUR
+   Primary Dns Suffix  . . . . . . . : 
+   Node Type . . . . . . . . . . . . : Hybrid
+   IP Routing Enabled. . . . . . . . : No
+   WINS Proxy Enabled. . . . . . . . : No
+   DNS Suffix Search List. . . . . . : txqalab.forescout.local
+
+Ethernet adapter Ethernet0:
+
+   Connection-specific DNS Suffix  . : 
+   Description . . . . . . . . . . . : vmxnet3 Ethernet Adapter
+   Physical Address. . . . . . . . . : 00-50-56-B8-41-74
+   DHCP Enabled. . . . . . . . . . . : No
+   Autoconfiguration Enabled . . . . : Yes
+   IPv4 Address. . . . . . . . . . . : 10.16.133.134(Preferred) 
+   Subnet Mask . . . . . . . . . . . : 255.255.255.192
+   Default Gateway . . . . . . . . . : 10.16.133.190
+   DNS Servers . . . . . . . . . . . : 10.100.127.1
+   NetBIOS over Tcpip. . . . . . . . : Enabled
+
+Ethernet adapter pciPassthru0:
+
+   Connection-specific DNS Suffix  . : txqalab.forescout.local
+   Description . . . . . . . . . . . : Broadcom NetXtreme Gigabit Ethernet
+   Physical Address. . . . . . . . . : 98-F2-B3-01-A0-55
+   DHCP Enabled. . . . . . . . . . . : Yes
+   Autoconfiguration Enabled . . . . : Yes
+   IPv6 Address. . . . . . . . . . . : fd6f:9d5e:221e:1688:bc69:9b83:4b36:6aac(Preferred) 
+   Lease Obtained. . . . . . . . . . : Thursday, March 19, 2026 8:49:06 PM
+   Lease Expires . . . . . . . . . . : Tuesday, March 31, 2026 8:49:07 PM
+   IPv6 Address. . . . . . . . . . . : fd6f:9d5e:221e:1688:c9a1:3081:1951:848(Preferred) 
+   Temporary IPv6 Address. . . . . . : fd6f:9d5e:221e:1688:c49e:1275:85c6:8be9(Preferred) 
+   Link-local IPv6 Address . . . . . : fe80::dd89:8b07:d016:5d09%12(Preferred) 
+   IPv4 Address. . . . . . . . . . . : 10.16.178.70(Preferred) 
+   Subnet Mask . . . . . . . . . . . : 255.255.255.192
+   Lease Obtained. . . . . . . . . . : Thursday, March 19, 2026 8:49:08 PM
+   Lease Expires . . . . . . . . . . : Sunday, March 22, 2026 8:49:08 PM
+   Default Gateway . . . . . . . . . : fe80::250:56ff:feb8:1401%12
+                                       fe80::2b1:e3ff:fe83:a1c4%12
+                                       10.16.178.126
+   DHCP Server . . . . . . . . . . . : 10.100.127.1
+   DHCPv6 IAID . . . . . . . . . . . : 110686899
+   DHCPv6 Client DUID. . . . . . . . : 00-01-00-01-27-92-2B-22-98-F2-B3-01-A0-55
+   DNS Servers . . . . . . . . . . . : fd6f:9d5e:221e:127::1
+                                       10.100.127.1
+   Primary WINS Server . . . . . . . : 10.100.127.1
+   NetBIOS over Tcpip. . . . . . . . : Enabled

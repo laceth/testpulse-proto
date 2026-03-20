@@ -1,0 +1,29 @@
+﻿
+Profile on interface Ethernet0
+======================================================================= 
+Applied: User Profile
+
+    Profile Version        : 1
+    Type                   : Wired LAN
+    AutoConfig Version     : 1
+    802.1x                 : Enabled
+    802.1x                 : Not Enforced
+    EAP type               : Microsoft: Protected EAP (PEAP)
+    802.1X auth credential : [Profile credential not valid]
+    Cache user information : [Yes]
+
+Profile on interface pciPassthru0
+======================================================================= 
+Applied: User Profile
+
+    Profile Version        : 1
+    Type                   : Wired LAN
+    AutoConfig Version     : 1
+    802.1x                 : Enabled
+    802.1x                 : Enforced
+    EAP type               : Microsoft: Smart Card or other certificate
+    802.1X auth credential : Machine credential
+    Cache user information : No
+
+Machine profile is not installed on this device.
+

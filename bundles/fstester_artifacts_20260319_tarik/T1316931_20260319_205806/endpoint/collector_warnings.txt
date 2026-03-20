@@ -1,0 +1,3 @@
+﻿Warnings for RunId=T1316931_20260319_205806 at 20260319_205809
+
+No LAN profile detected/provided.

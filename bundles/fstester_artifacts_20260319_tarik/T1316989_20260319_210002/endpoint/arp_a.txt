@@ -1,0 +1,9 @@
+﻿
+Interface: 10.16.133.134 --- 0xd
+  Internet Address      Physical Address      Type
+  10.16.133.190         00-50-56-b8-07-36     dynamic   
+  10.16.133.191         ff-ff-ff-ff-ff-ff     static    
+  224.0.0.22            01-00-5e-00-00-16     static    
+  224.0.0.251           01-00-5e-00-00-fb     static    
+  224.0.0.252           01-00-5e-00-00-fc     static    
+  239.255.255.250       01-00-5e-7f-ff-fa     static    

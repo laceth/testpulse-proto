@@ -1,0 +1,16 @@
+﻿my "Personal"
+================ Certificate 0 ================
+Serial Number: 24cbe7333ab6b1b34be21d412cbe07bd
+Issuer: CN=AUTOBVT-GIG6GUR
+ NotBefore: 9/3/2025 10:50 AM
+ NotAfter: 9/2/2028 10:50 AM
+Subject: CN=AUTOBVT-GIG6GUR
+Signature matches Public Key
+Root Certificate: Subject matches Issuer
+Cert Hash(sha1): c995cc398b8f885c7dd8a42c7cf284afb7fcaa14
+  Key Container = dba83628ce5e50759d97a2b1af966a41_6f189fd0-7fb0-402a-81a7-614481ed598e
+  Simple container name: tp-c7d88698-85e6-4870-ba59-fb4c28e60f1b
+  Provider = Microsoft Enhanced RSA and AES Cryptographic Provider
+Private key is NOT exportable
+Encryption test passed
+CertUtil: -store command completed successfully.

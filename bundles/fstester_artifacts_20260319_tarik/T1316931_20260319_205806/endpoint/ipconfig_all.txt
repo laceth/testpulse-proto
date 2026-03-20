@@ -1,0 +1,30 @@
+﻿
+Windows IP Configuration
+
+   Host Name . . . . . . . . . . . . : AUTOBVT-GIG6GUR
+   Primary Dns Suffix  . . . . . . . : 
+   Node Type . . . . . . . . . . . . : Hybrid
+   IP Routing Enabled. . . . . . . . : No
+   WINS Proxy Enabled. . . . . . . . : No
+
+Ethernet adapter Ethernet0:
+
+   Connection-specific DNS Suffix  . : 
+   Description . . . . . . . . . . . : vmxnet3 Ethernet Adapter
+   Physical Address. . . . . . . . . : 00-50-56-B8-41-74
+   DHCP Enabled. . . . . . . . . . . : No
+   Autoconfiguration Enabled . . . . : Yes
+   IPv4 Address. . . . . . . . . . . : 10.16.133.134(Preferred) 
+   Subnet Mask . . . . . . . . . . . : 255.255.255.192
+   Default Gateway . . . . . . . . . : 10.16.133.190
+   DNS Servers . . . . . . . . . . . : 10.100.127.1
+   NetBIOS over Tcpip. . . . . . . . : Enabled
+
+Ethernet adapter pciPassthru0:
+
+   Media State . . . . . . . . . . . : Media unauthenticated
+   Connection-specific DNS Suffix  . : txqalab.forescout.local
+   Description . . . . . . . . . . . : Broadcom NetXtreme Gigabit Ethernet
+   Physical Address. . . . . . . . . : 98-F2-B3-01-A0-55
+   DHCP Enabled. . . . . . . . . . . : Yes
+   Autoconfiguration Enabled . . . . : Yes

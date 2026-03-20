@@ -1,0 +1,12 @@
+{
+  "bundle_type": "raw-artifact-fallback",
+  "reason": "testpulse CLI is not installed in this environment",
+  "run_dir": "/home/triley/fstester001/artifacts/T1316931_20260319_205806",
+  "framework_log": "logs/fstester_log_20260319_205810/fstester.log",
+  "testcase_id": "T1316931",
+  "expected_decision": "unknown",
+  "pcap_files": [
+    "endpoint/pcap\\eapol_endpoint.pcapng",
+    "pcap/radius_appliance_T1316931_20260319_205806.pcap"
+  ]
+}
