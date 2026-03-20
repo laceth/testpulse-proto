@@ -2,7 +2,7 @@
     "servers": {
         "testpulse": {
             "type": "stdio",
-            "command": "/home/triley/fstester001/.public/bin/python",
+            "command": "${workspaceFolder}/.testpulse/bin/python",
             "args": ["-m", "testpulse.mcp.server"],
             "env": {
                 "TESTPULSE_CONFIG": "${workspaceFolder}/radius.yaml",

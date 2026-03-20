@@ -692,12 +692,12 @@ def _detail_for_timeline(ev: dict) -> str:
     return _san(", ".join(parts), 60) if parts else ""
 
 
-def generate_timeline(bundle: dict) -> str:
-    """Generate a horizontal chronological timeline using flowchart LR.
+def generate_timeline(bundle: dict, *, orientation: str = "TD") -> str:
+    """Generate a chronological timeline as a Mermaid flowchart.
 
-    Reproduces the old sequence-diagram layout (participant lanes, arrows
-    between sources, inter-source messages, verdict box) but oriented
-    **horizontally** — time flows left-to-right along the X axis.
+    Orientation controls readability:
+    - "TD" (default): vertical, time flows top-to-bottom (best for large runs)
+    - "LR": horizontal, time flows left-to-right
     """
     timeline = bundle.get("timeline", [])
     classification = bundle.get("classification", "UNKNOWN")
@@ -880,8 +880,12 @@ def generate_timeline(bundle: dict) -> str:
     else:
         icon = "[?]"
 
+    orient = (orientation or "TD").upper()
+    if orient not in {"TD", "TB", "LR", "RL"}:
+        orient = "TD"
+
     L: list[str] = []
-    L.append("graph LR")
+    L.append(f"graph {orient}")
     L.append("")
 
     styles: list[str] = []

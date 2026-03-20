@@ -31,6 +31,9 @@ import re
 from typing import Any
 from testpulse.models import AuthEvent
 
+# FreeRADIUS request context number, e.g. ``Debug: (8) ...``
+REQ_CTX = re.compile(r"\bDebug:\s*\((?P<ctx>\d+)\)")
+
 # ---------------------------------------------------------------------------
 # Log-prefix parsing: ``radiusd:PID:EPOCH:Day Mon DD HH:MM:SS YYYY:``
 # ---------------------------------------------------------------------------
@@ -49,7 +52,7 @@ TS_ISO = re.compile(r"(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)
 # Packet-header regex — captures Id, src, dst, length
 # ---------------------------------------------------------------------------
 PACKET_LINE = re.compile(
-    r"(?P<action>Sent|Received)\s+(?P<type>Access-Accept|Access-Reject|Access-Request)"
+    r"(?P<action>Sent|Received)\s+(?P<type>Access-Accept|Access-Reject|Access-Request|Access-Challenge)"
     r"\s+Id\s+(?P<id>\d+)"
     r"\s+from\s+(?P<src_ip>[\d.]+):(?P<src_port>\d+)"
     r"\s+to\s+(?P<dst_ip>[\d.]+):(?P<dst_port>\d+)"
@@ -60,7 +63,14 @@ PACKET_LINE = re.compile(
 # Simpler matchers (kept for lines that may lack the from/to/length suffix)
 SENT_ACCEPT = re.compile(r"Sent\s+Access-Accept\s+Id\s+(?P<id>\d+)", re.IGNORECASE)
 SENT_REJECT = re.compile(r"Sent\s+Access-Reject\s+Id\s+(?P<id>\d+)", re.IGNORECASE)
+SENT_CHALLENGE = re.compile(r"Sent\s+Access-Challenge\s+Id\s+(?P<id>\d+)", re.IGNORECASE)
 RECV_REQUEST = re.compile(r"Received\s+Access-Request\s+Id\s+(?P<id>\d+)", re.IGNORECASE)
+
+# Request lifecycle / housekeeping
+CLEANUP_REQ = re.compile(
+    r"Cleaning up request packet ID\s+(?P<id>\d+)\s+with timestamp\s+\+(?P<age>\d+)\s+due to\s+(?P<reason>\w+)",
+    re.IGNORECASE,
+)
 
 # ---------------------------------------------------------------------------
 # RADIUS attribute extraction
@@ -83,6 +93,7 @@ _KIND_MAP = {
     ("Received", "Access-Request"): "RADIUS_ACCESS_REQUEST",
     ("Sent", "Access-Accept"): "RADIUS_ACCESS_ACCEPT",
     ("Sent", "Access-Reject"): "RADIUS_ACCESS_REJECT",
+    ("Sent", "Access-Challenge"): "RADIUS_ACCESS_CHALLENGE",
 }
 
 
@@ -115,7 +126,14 @@ def _extract_attrs(lines: list[str], start: int) -> tuple[dict[str, Any], int]:
     while j < len(lines):
         attr_line = lines[j]
         # Stop at the next packet header
-        if PACKET_LINE.search(attr_line) or SENT_ACCEPT.search(attr_line) or SENT_REJECT.search(attr_line) or RECV_REQUEST.search(attr_line):
+        if (
+            PACKET_LINE.search(attr_line)
+            or SENT_ACCEPT.search(attr_line)
+            or SENT_REJECT.search(attr_line)
+            or SENT_CHALLENGE.search(attr_line)
+            or RECV_REQUEST.search(attr_line)
+            or CLEANUP_REQ.search(attr_line)
+        ):
             break
         # Stop at non-attribute, non-debug lines
         if "=" not in attr_line and "Debug:" not in attr_line:
@@ -182,6 +200,28 @@ def parse_radiusd(text: str) -> list[AuthEvent]:
     while i < len(lines):
         line = lines[i]
 
+        # Housekeeping / lifecycle lines that contain useful metadata but no packet header
+        if cm := CLEANUP_REQ.search(line):
+            prefix = _extract_prefix(line)
+            radius_id = int(cm.group("id"))
+            ev = AuthEvent(
+                ts=prefix["ts"],
+                kind="RADIUSD_REQUEST_CLEANUP",
+                source="radiusd.log",
+                message=line.strip(),
+                radius_id=radius_id,
+                pid=prefix["pid"],
+                epoch=prefix["epoch"],
+                metadata={
+                    "age": int(cm.group("age")),
+                    "reason": cm.group("reason"),
+                },
+                raw_line=line,
+            )
+            events.append(ev)
+            i += 1
+            continue
+
         # Try the full packet-header regex first
         pm = PACKET_LINE.search(line)
         if pm:
@@ -194,6 +234,7 @@ def parse_radiusd(text: str) -> list[AuthEvent]:
             dst_port = int(pm.group("dst_port"))
             pkt_len = int(pm.group("length"))
             prefix = _extract_prefix(line)
+            ctx_m = REQ_CTX.search(line)
             kind = _KIND_MAP.get((action, ptype), f"RADIUS_{action.upper()}_{ptype.upper().replace('-', '_')}")
 
             # Look ahead for attributes
@@ -239,6 +280,7 @@ def parse_radiusd(text: str) -> list[AuthEvent]:
                 auth_method=attrs.get("auth_method"),
                 service_type=attrs.get("service_type"),
                 framed_mtu=attrs.get("framed_mtu"),
+                metadata={"request_ctx": int(ctx_m.group("ctx"))} if ctx_m else {},
                 raw_line=line,
             )
             events.append(ev)
@@ -249,11 +291,13 @@ def parse_radiusd(text: str) -> list[AuthEvent]:
         for regex, kind in [
             (SENT_ACCEPT, "RADIUS_ACCESS_ACCEPT"),
             (SENT_REJECT, "RADIUS_ACCESS_REJECT"),
+            (SENT_CHALLENGE, "RADIUS_ACCESS_CHALLENGE"),
             (RECV_REQUEST, "RADIUS_ACCESS_REQUEST"),
         ]:
             sm = regex.search(line)
             if sm:
                 prefix = _extract_prefix(line)
+                ctx_m = REQ_CTX.search(line)
                 radius_id = int(sm.group("id"))
                 attrs, next_i = _extract_attrs(lines, i + 1)
 
@@ -283,6 +327,7 @@ def parse_radiusd(text: str) -> list[AuthEvent]:
                     auth_method=attrs.get("auth_method"),
                     service_type=attrs.get("service_type"),
                     framed_mtu=attrs.get("framed_mtu"),
+                    metadata={"request_ctx": int(ctx_m.group("ctx"))} if ctx_m else {},
                     raw_line=line,
                 )
                 events.append(ev)

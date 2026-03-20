@@ -26,6 +26,84 @@ def read_text_if_exists(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
 
 
+def _materialize_log_from_patterns(
+    run_dir: Path,
+    dest_name: str,
+    patterns: list[str],
+    prefer_token: str | None = None,
+) -> Path:
+    """Create a standard log file (dest_name) by concatenating matching files.
+
+    This supports analyzing fstester-generated folders directly, where logs may
+    be named like "*_radiusd_*.log" / "*_dot1x_*.log" / "fstester_*.log".
+
+    If the destination already exists, it is left untouched.
+    """
+    dest = run_dir / dest_name
+    if dest.exists():
+        return dest
+
+    candidates: list[Path] = []
+    for pattern in patterns:
+        candidates.extend(p for p in run_dir.glob(pattern) if p.is_file())
+
+    # De-dup + avoid writing a file to itself
+    unique = sorted({p.resolve() for p in candidates if p.name != dest_name})
+    if not unique:
+        return dest
+
+    if prefer_token:
+        token_matches = [p for p in unique if prefer_token in p.name]
+        if token_matches:
+            unique = sorted(token_matches)
+
+    chunks: list[str] = []
+    for p in unique:
+        try:
+            chunks.append(p.read_text(encoding="utf-8", errors="ignore"))
+        except Exception:
+            continue
+
+    if chunks:
+        dest.write_text("\n\n".join(chunks), encoding="utf-8")
+    return dest
+
+
+def _extract_run_token(run_dir: Path) -> str | None:
+        """Extract a fstester-style timestamp token from the run_dir name.
+
+        Examples:
+            fstester_log_20260319_173643 -> 20260319_173643
+        """
+        import re
+
+        m = re.search(r"(\d{8}_\d{6})", run_dir.name)
+        return m.group(1) if m else None
+
+
+def materialize_common_logs(run_dir: Path) -> None:
+    """Best-effort: ensure standard filenames exist for parsers."""
+    token = _extract_run_token(run_dir)
+
+    _materialize_log_from_patterns(
+        run_dir,
+        dest_name="radiusd.log",
+        patterns=["*_radiusd_*.log", "*radiusd*.log"],
+        prefer_token=token,
+    )
+    _materialize_log_from_patterns(
+        run_dir,
+        dest_name="dot1x.log",
+        patterns=["*_dot1x_*.log", "*dot1x*.log"],
+        prefer_token=token,
+    )
+    _materialize_log_from_patterns(
+        run_dir,
+        dest_name="framework.log",
+        patterns=["fstester*.log", "*framework*.log"],
+    )
+
+
 def maybe_collect_appliance(
     run_dir: Path,
     testbed_config: Path | None = None,
@@ -150,6 +228,9 @@ def run_diagnostics(
             mac=mac,
         )
 
+    # -- If analyzing a fstester log folder directly, materialize standard filenames
+    materialize_common_logs(run_dir)
+
     # -- Optional: collect endpoint artifacts into run_dir/endpoint/
     if collect_endpoint and endpoint_ip:
         run_id = derive_run_id(run_dir)
@@ -247,6 +328,12 @@ def main() -> None:
         help="Generate Mermaid chronological timeline diagram. "
              "Always on by default; use --no-timeline to disable. "
              "Optionally specify output path; defaults to <out>_timeline.mmd",
+    )
+    parser.add_argument(
+        "--timeline-style",
+        choices=["vertical", "horizontal"],
+        default="vertical",
+        help="Timeline diagram layout. 'vertical' is recommended for large runs.",
     )
     parser.add_argument(
         "--no-timeline",
@@ -474,18 +561,25 @@ def main() -> None:
     if args.timeline is not None and not args.no_timeline:
         from testpulse.tools.mermaid_timeline import generate_timeline
 
-        # 3. Chronological timeline (graph LR)
+        # 3. Chronological timeline (single chart)
+        orientation = "TD" if args.timeline_style == "vertical" else "LR"
+        style_label = "vertical" if orientation == "TD" else "horizontal"
         tl_path = (
             Path(args.timeline)
             if args.timeline != "auto"
             else args.out.with_name(args.out.stem + "_timeline.mmd")
         )
-        tl_markup = generate_timeline(bundle)
+        # Clean up any older split timelines for this same output stem
+        for old in tl_path.parent.glob(args.out.stem + "_timeline_*.mmd"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        tl_markup = generate_timeline(bundle, orientation=orientation)
         tl_path.parent.mkdir(parents=True, exist_ok=True)
         tl_path.write_text(tl_markup, encoding="utf-8")
         mmd_paths.append(tl_path)
-        print(f"[OK] Wrote timeline diagram (horizontal): {tl_path}  ({len(tl_markup)} chars)")
-        print(tl_markup)
+        print(f"[OK] Wrote timeline diagram ({style_label}): {tl_path}  ({len(tl_markup)} chars)")
 
     # ── Component topology diagram (ON by default) ──────────────────────
     if not args.no_mermaid:
@@ -589,12 +683,103 @@ _TAB_LABELS = {
 
 def _tab_for_stem(stem: str) -> tuple[str, str]:
     """Derive a tab label + description from an .mmd file stem."""
+    import re
+
+    # Handle split timeline parts like *_timeline_01.mmd
+    m = re.search(r"timeline_(\d+)$", stem)
+    if m:
+        n = int(m.group(1))
+        label, desc = _TAB_LABELS["timeline"]
+        return f"{label} ({n})", desc
+
     for key, (label, desc) in _TAB_LABELS.items():
-        if stem.endswith(key):
+        if stem.endswith(key) or f"_{key}_" in stem or stem == key:
             return label, desc
     # Fallback: if the stem ends with _bundle or is the base bundle name,
     # it's the main vertical protocol sequence diagram.
     return "Protocol Sequence", "Vertical protocol sequence diagram"
+
+
+def _split_timeline_by_time(bundle: dict, *, window_seconds: int = 120, max_parts: int = 12) -> list[tuple[str, dict]]:
+    """Split bundle timeline into multiple parts by epoch time window.
+
+    Returns a list of (suffix, sub_bundle) where suffix is like "timeline_01".
+    If splitting is not possible/needed, returns a single part with "timeline".
+    """
+    import math
+    import re
+    from datetime import datetime
+
+    timeline = bundle.get("timeline", []) or []
+
+    def _parse_epoch(ev: dict) -> float:
+        ep = ev.get("epoch")
+        if ep is not None and ep != "":
+            try:
+                return float(ep)
+            except (TypeError, ValueError):
+                pass
+        ts = (ev.get("ts") or "").strip()
+        m = re.match(r"(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})", ts)
+        if m:
+            try:
+                return datetime.strptime(m.group(0), "%Y-%m-%d %H:%M:%S").timestamp()
+            except ValueError:
+                return 0.0
+        # FreeRADIUS-ish "Thu Mar 19 17:20:23 2026"
+        cleaned = re.sub(r"\s+[A-Z]{2,5}\s+[-+]\d{4}\s+", " ", ts)
+        cleaned = re.sub(r"\s+[A-Z]{2,5}\s+", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        try:
+            return datetime.strptime(cleaned, "%a %b %d %H:%M:%S %Y").timestamp()
+        except ValueError:
+            return 0.0
+
+    epochs = [
+        _parse_epoch(ev)
+        for ev in timeline
+        if ev.get("ts")
+    ]
+    epochs = [e for e in epochs if e > 0]
+    if not epochs:
+        return [("timeline", bundle)]
+
+    start = min(epochs)
+    end = max(epochs)
+    duration = end - start
+    if duration <= window_seconds:
+        return [("timeline", bundle)]
+
+    # Compute window size so we don't create too many tabs.
+    parts = int(math.ceil(duration / float(window_seconds)))
+    if parts > max_parts:
+        window_seconds = int(math.ceil(duration / float(max_parts)))
+        parts = int(math.ceil(duration / float(window_seconds)))
+    parts = max(2, min(parts, max_parts))
+
+    # Partition
+    result: list[tuple[str, dict]] = []
+    # Keep untimed/config events in the first part to preserve context.
+    untimed = [ev for ev in timeline if not ev.get("ts")]
+    for i in range(parts):
+        w0 = start + i * window_seconds
+        w1 = start + (i + 1) * window_seconds
+        if i == parts - 1:
+            w1 = end + 1
+
+        chunk = [
+            ev for ev in timeline
+            if ev.get("ts") and (w0 <= _parse_epoch(ev) < w1)
+        ]
+        if i == 0 and untimed:
+            chunk = untimed + chunk
+
+        sub = dict(bundle)
+        sub["timeline"] = chunk
+        suffix = f"timeline_{i+1:02d}"
+        result.append((suffix, sub))
+
+    return result
 
 
 _DASHBOARD_TEMPLATE = """\
@@ -616,6 +801,7 @@ _DASHBOARD_TEMPLATE = """\
   .meta .chip {{ background: #0f3460; padding: 4px 12px; border-radius: 14px; }}
   .finding {{ background: rgba(233,69,96,0.15); border-left: 3px solid #e94560;
               padding: 6px 12px; margin: 3px 30px; font-size: 0.85em; border-radius: 2px; }}
+    .finding.policy {{ font-weight: 600; }}
   .tabs {{ display: flex; flex-wrap: wrap; background: #16213e; padding: 0 20px;
            border-bottom: 2px solid #333; align-items: center; }}
   .tab {{ padding: 10px 18px; cursor: pointer; color: #888; font-size: 0.9em;
@@ -625,7 +811,10 @@ _DASHBOARD_TEMPLATE = """\
   .diagrams {{ padding: 20px; min-height: 400px; }}
   /* All panes start visible so Mermaid can render; JS hides inactive after init */
   .pane {{ background: #fff; border-radius: 8px; padding: 20px; margin: 10px;
-           overflow-x: auto; }}
+              overflow: auto; }}
+  /* Mermaid will otherwise shrink huge SVGs to fit container (max-width: 100%).
+      Disable that so you can scroll/pan at a readable scale. */
+  .pane svg {{ max-width: none !important; width: auto !important; height: auto !important; }}
   .pane.hidden {{ display: none; }}
   .pane-hdr {{ display: flex; align-items: center; justify-content: space-between;
                padding: 5px 10px; }}
@@ -703,9 +892,25 @@ def _export_dashboard(mmd_paths: list[Path], bundle: dict) -> Path | None:
     confidence = bundle.get("confidence", 0)
 
     findings = bundle.get("findings", [])
-    findings_html = "\n".join(
-        f'<div class="finding">{f}</div>' for f in findings
-    ) if findings else ""
+    def _finding_text(item: object) -> str:
+        if isinstance(item, dict):
+            title = item.get("title") or item.get("kind") or "Finding"
+            detail = item.get("detail") or item.get("message") or ""
+            text = f"{title}: {detail}".strip()
+            return text if text != ":" else str(item)
+        return str(item)
+
+    finding_texts = [_finding_text(f) for f in findings]
+    policy_texts = [t for t in finding_texts if t.startswith("DOT1X policy present:")]
+    other_texts = [t for t in finding_texts if not t.startswith("DOT1X policy present:")]
+
+    parts: list[str] = []
+    for t in policy_texts:
+        parts.append(f'<div class="finding policy">{t}</div>')
+    for t in other_texts:
+        parts.append(f'<div class="finding">{t}</div>')
+
+    findings_html = "\n".join(parts) if parts else ""
 
     tabs_parts: list[str] = []
     panes_parts: list[str] = []
@@ -759,7 +964,8 @@ _HTML_TEMPLATE = """\
 <style>
   body {{ font-family: sans-serif; background: #1e1e1e; color: #ddd; margin: 2em; }}
   h1 {{ color: #fff; }}
-  .mermaid {{ background: #fff; padding: 1em; border-radius: 8px; }}
+    .mermaid {{ background: #fff; padding: 1em; border-radius: 8px; overflow: auto; }}
+    .mermaid svg {{ max-width: none !important; width: auto !important; height: auto !important; }}
 </style>
 </head>
 <body>

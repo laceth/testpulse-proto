@@ -16,8 +16,10 @@ def infer_observed_decision(events: list[AuthEvent]) -> tuple[Decision, float]:
       7. ``ENDPOINT_WIRED_AUTOCONFIG`` — endpoint-side wired auth events
     """
     # -- RADIUS packet evidence
-    saw_accept = any(e.kind == "RADIUS_ACCESS_ACCEPT" for e in events)
-    saw_reject = any(e.kind == "RADIUS_ACCESS_REJECT" for e in events)
+    accept_count = sum(1 for e in events if e.kind == "RADIUS_ACCESS_ACCEPT")
+    reject_count = sum(1 for e in events if e.kind == "RADIUS_ACCESS_REJECT")
+    saw_accept = accept_count > 0
+    saw_reject = reject_count > 0
 
     # -- Framework property evidence
     saw_fw_accept = any(
@@ -91,6 +93,30 @@ def infer_observed_decision(events: list[AuthEvent]) -> tuple[Decision, float]:
         if saw_endpoint_failure:
             return Decision.REJECT, 0.95
         return Decision.REJECT, 0.85
+
+    # Mixed RADIUS evidence (both Accept and Reject seen)
+    # This is common in multi-attempt or reauth flows; prefer corroborated
+    # framework results over weak endpoint-side signals.
+    if saw_accept and saw_reject:
+        # Strong framework corroboration: if property checks confirm Access-Accept
+        # and overall checks passed, treat this as an observed ACCEPT.
+        if (saw_fw_accept or saw_all_checks or saw_test_passed) and not (saw_fw_reject or saw_test_failed):
+            # Degrade confidence slightly due to the presence of at least one reject.
+            conf = 0.95 if reject_count <= 1 else 0.90
+            if saw_identity_accept:
+                conf = min(conf + 0.02, 0.98)
+            return Decision.ACCEPT, conf
+
+        # Strong framework corroboration for reject
+        if (saw_fw_reject or saw_test_failed) and not (saw_fw_accept or saw_all_checks or saw_test_passed):
+            conf = 0.95 if accept_count <= 1 else 0.90
+            if saw_identity_reject:
+                conf = min(conf + 0.02, 0.98)
+            return Decision.REJECT, conf
+
+        # Weak fallback: majority of packet outcomes
+        if accept_count != reject_count:
+            return (Decision.ACCEPT, 0.70) if accept_count > reject_count else (Decision.REJECT, 0.70)
 
     # No RADIUS packets — fall back to framework properties
     if saw_fw_accept and not saw_fw_reject:

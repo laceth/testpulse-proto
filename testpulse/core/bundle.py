@@ -44,6 +44,16 @@ def build_bundle(
         f"Expected decision: {expectation.expected_decision.value}",
         f"Functional pass: {observed == expectation.expected_decision}",
     ]
+
+    # -- Informational policy/config signals (do not affect pass/fail)
+    vlan_restrict_values = {
+        (e.vlan_config or "").strip()
+        for e in events
+        if e.kind == "DOT1X_VLAN_RESTRICT_CONFIG" and (e.vlan_config or "").strip()
+    }
+    if any("reject=dummy" in v.lower() for v in vlan_restrict_values):
+        findings.append("DOT1X policy present: restrict => reject=dummy (informational)")
+
     findings.extend(diagnostic_findings)
 
     timeline = [_event_to_timeline_entry(event) for event in events]

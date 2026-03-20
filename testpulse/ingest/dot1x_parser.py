@@ -43,6 +43,12 @@ PREFIX = re.compile(
     r"(?:\s+[A-Z]{2,5}(?:\s+[+-]\d{4})?)?\s+\d{4}):"
 )
 
+# Some dot1x logs embed watchdog lines with a different prefix.
+WATCHDOG_PREFIX = re.compile(
+    r"radiusd-watchdog::(?P<pid>\d+):(?P<epoch>\d+(?:\.\d+)?):"
+    r"(?P<ts>[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}):"
+)
+
 # Fallback ISO (for mixed-format files)
 TS_ISO = re.compile(r"(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)")
 
@@ -79,6 +85,15 @@ POLICY_FILE_UPDATE = re.compile(
     re.IGNORECASE,
 )
 
+# radiusd-watchdog metadata (fs_clients.conf in tmpfs + symlink)
+WATCHDOG_CFG_FILE = re.compile(r"Configuration file is inplace:\s*(?P<path>\S+)", re.IGNORECASE)
+WATCHDOG_FILE_INFO = re.compile(
+    r"file info:\s*(?P<mode>[-rwx]{9})\s+\d+\s+(?P<owner>\S+)\s+(?P<group>\S+)\s+(?P<size>\d+)\s+(?P<mtime>.+)",
+    re.IGNORECASE,
+)
+WATCHDOG_CFG_LINK = re.compile(r"Configuration link is inplace:\s*(?P<link>\S+)", re.IGNORECASE)
+WATCHDOG_LINK_INFO = re.compile(r"link info:\s*(?P<info>.+)", re.IGNORECASE)
+
 # ---------------------------------------------------------------------------
 # Policy config structures (embedded Perl hash)
 # ---------------------------------------------------------------------------
@@ -102,9 +117,15 @@ def _extract_prefix(line: str) -> dict[str, Any]:
         info["epoch"] = float(m.group("epoch"))
         info["ts"] = m.group("ts")
     else:
-        m2 = TS_ISO.search(line)
-        if m2:
-            info["ts"] = m2.group("ts")
+        mw = WATCHDOG_PREFIX.search(line)
+        if mw:
+            info["pid"] = int(mw.group("pid"))
+            info["epoch"] = float(mw.group("epoch"))
+            info["ts"] = mw.group("ts")
+        else:
+            m2 = TS_ISO.search(line)
+            if m2:
+                info["ts"] = m2.group("ts")
     return info
 
 
@@ -171,6 +192,26 @@ def parse_dot1x(text: str) -> list[AuthEvent]:
             kind = "ENDPOINT_AUTH_SUCCESS"
         elif AUTH_FAILURE.search(line):
             kind = "ENDPOINT_AUTH_FAILURE"
+
+        # -- Watchdog metadata lines (appear inside dot1x logs) --
+        elif m := WATCHDOG_CFG_FILE.search(line):
+            kind = "DOT1X_RADIUSD_CLIENTS_CONFIG_FILE"
+            extra["metadata"] = {"path": m.group("path")}
+        elif m := WATCHDOG_FILE_INFO.search(line):
+            kind = "DOT1X_RADIUSD_CLIENTS_CONFIG_FILE_INFO"
+            extra["metadata"] = {
+                "mode": m.group("mode"),
+                "owner": m.group("owner"),
+                "group": m.group("group"),
+                "size": int(m.group("size")),
+                "mtime": m.group("mtime").strip(),
+            }
+        elif m := WATCHDOG_CFG_LINK.search(line):
+            kind = "DOT1X_RADIUSD_CLIENTS_CONFIG_LINK"
+            extra["metadata"] = {"link": m.group("link")}
+        elif m := WATCHDOG_LINK_INFO.search(line):
+            kind = "DOT1X_RADIUSD_CLIENTS_CONFIG_LINK_INFO"
+            extra["metadata"] = {"info": m.group("info").strip()}
 
         # -- Config structure lines (no prefix, part of a Perl dump) --
         else:

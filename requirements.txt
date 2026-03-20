@@ -1,0 +1,17 @@
+# TestPulse Proto — “all features” install
+#
+# Usage:
+#   python -m venv .venv
+#   . .venv/bin/activate
+#   pip install -U pip
+#   pip install -r requirements.txt
+#
+# Notes:
+# - This installs TestPulse from the current repo with all optional feature groups.
+# - It also includes optional dependencies used by scripts/readme_to_pdf.py.
+
+.[endpoint,pcap,mcp,api]
+
+# Optional (documentation tooling)
+Markdown
+fpdf2
